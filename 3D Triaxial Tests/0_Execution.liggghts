@@ -1,0 +1,209 @@
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+###########################################		Triaxial Files		############################################
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+#Made by GONCALVES DE OLIVEIRA CHUEIRE Joao Augusto as part of PhD at INSA de Lyon
+
+#This script is divided into many parts located at src folder that will be called 
+#depending on the type of simulation. 
+#LiggghtsExe.sh - Execution file, create folders and check for existing load files;
+#0_Execution - is the general part which contains the variable definition and controls
+#which function will be done next;
+#1_GrInsertion - insertion of grains to settle under gravity;
+#2_Consolidation - applies a constant stress to all the wall of the specimen;
+#2_LoadConso - when load is called it bypass the 2_Consolidation file, applying the same 
+#definitions;
+#3_Triaxial_Drained - a constant vertical displacement balanced by a fixed pressure on 
+#the other walls;
+#3_Triaxial_Undrained - constant vertical displacement balanced by displacement of other 
+#walls maintaining constant volume;
+#3_Triaxial_Qcst - Constant deviatoric stress and decreasing pressure;
+#3_Triaxial_Qcst_Load - Load ongoing execution of a Qvst triaxial test;
+#3_Triaxial_Proportional_Strain - keep horizontal strains proportional to vertical ones;
+
+#############################################		Variables		#############################################
+########## Exterior parameterss
+variable	Width 		equal 0.15		#experiment widith, x in meters
+variable	Length 		equal 0.35		#experiment length, y in meters
+variable	Height		equal 0.45		#experiment height, z in meters
+variable	MaxRadius	equal 0.008		#maximal radius of the simulation
+
+########## Material parameters
+variable	Eg			equal 1e8		#Young modulus grains 
+variable	Ew			equal 1e8		#Young modulus walls
+variable	v			equal 0.25		#Poisson coefficient
+variable	u			equal 0.57		#friction coefficient
+variable	e			equal 0.9		#restitution coefficient grain-grain
+variable	eW			equal 0.1		#restitution coefficient grain-wall
+variable	r			equal 0.3		#rolling friction coefficient
+	#Different material for insertion part. To modify specimen density.
+variable	vIns		equal 0.25		#Poisson coefficient
+variable	uIns		equal 100		#friction coefficient
+variable	eIns		equal 0.9		#restitution coefficient
+variable	rIns		equal 100		#rolling friction coefficient
+variable	c			equal 5e6		#Cohesion energy density in J/m3 (Pa?)
+
+########## Simulation type
+	#Options : 1 Drained, 2 Undrained Prop Strain, 3 Undrained Isoch, 4 Qcst, 0 insertion only
+variable 	simType		equal 4
+	#strain target to stop simulation 0.2=20%
+variable	MaxE		equal 0.2
+	#create grain and piston vtk file : 1 yes, 0 no
+variable	vtkPlot		equal 0
+	#Add dif insertion values : 1 for yes, 0 for no
+variable	difIns		equal 0
+	#Add cohesion into insertion and consolidation : 1 for yes, 0 for no
+variable	insCoeh		equal 0
+	#Relaxation of walls before compression for grain reorganization : 1 yes 0 no -- not workin properly
+variable	relaxBol	equal 0
+
+########## Simulation parameters
+# - Drained : choose CpVh at least 20x higher then CpVv to ensure the horizontal pistons
+# have enough speed to mantain the confining stress constant. Recommended CpVv=0.002 and CpVh=0.05, with
+# Intv=12500. 
+# - Qcst : An equivalence of (CpVh=CpVv)=0.002 for strK=5e3, is needed for the pistons to have enough 
+#time to adapt to the targeted pressure. Speed of the pistons should be increased if increasing strK.
+#Furthermore q target is given by the difference (CpS-CsS). These values must be well defined.
+# - Undrained : the code will adapt the consolidation horizontal speed (CpVh) to make sure 
+#the volume of the specimen stay constant for any value of vertical speed (CpVv).
+	#piston parameters
+variable	CsS			equal 50e3		#Pistons stress - Consolidation [Pa] 			- all sim types
+variable	CsV			equal 0.02		#Pistons max speed - Consolidation [m/s]		- all sim types
+variable	CpVv		equal 0.002		#Vertical piston speed - Compression [m/s]		- all sim types
+variable	CpVh		equal 0.002		#Horizontal piston speed - compression [m/s]	- sim type 1
+variable	KP			equal 1.5		#PID piston control (indicated 1.5)				- all sim types
+variable	KD			equal 0			#PID piston control (indicated 0)				- all sim types
+	#Qcst values (targeted q = CpS - CsS)
+variable	CpS			equal 150e3		#Vertical piston targeted stress [Pa]			- sim type 4
+variable	strK		equal 2.5e3		#Pressure value reduced per second [Pa]	    	- sim type 4
+variable	IQcst		equal 100e3		#Interval between checks of Qcst calculations	- sim type 4
+	#global values
+variable	NeighSize	equal 0.01		#size of neighbor bins                      	- all sim types
+variable	dt			equal 2e-5		#One time-step value in seconds             	- all sim types  
+	#insertion values
+variable	Ngrains		equal 10e3		#Total (Max) number of grains to be inserted	- all sim types
+variable	InsrNb		equal 10e3 		#Number of particles inserted per second    	- all sim types
+variable	InsrInt		equal 2.5e3		#Interval of timesteps between insertions   	- all sim types
+	#saving intervals
+variable	Intv		equal 50e3		#Interval between savefiles                 	- all sim types
+variable	termInt		equal 10e3		#terminal update interval                   	- all sim types
+	#running times - make sure they are multiple of Intv or errors may be produced on post-treatment
+variable	runIns		equal 50e3		#nb of steps insertion							- all sim types
+variable	runCal		equal 50e3		#nb of steps calibration						- all sim types
+variable	runCons		equal 100e3		#nb of steps consolidation						- all sim types
+variable	runComp		equal 1e10		#nb of steps compression						- sim type 1
+
+########## Folder details
+variable	baseF		string ${tfI}	#basefile for all results
+next tfI
+variable	part		string ${tfI}	#insertion vtk files
+next tfI
+variable	part2		string ${tfI}	#conso and comp vtk files
+next tfI
+variable	partg		string ${tfI}	#data files
+next tfI
+variable 	svState		string ${tfI}	#reset files
+next tfI
+variable	msh			string src/meshes
+
+#############################################		Prepare Simulation		########################################
+########## Initial Values calculation
+	#geometric calculations
+variable	Width2		equal $(v_Width/2) 			#half box width, value used on the grain insertion
+	#force inital values
+variable	Fz			equal $(v_CsS*v_Length*v_Width) 	#Consolidation force on X initial value
+variable	Fy			equal $(v_CsS*v_Width*v_Height)		#Consolidation force on Y initial value
+variable	Fx			equal $(v_CsS*v_Length*v_Height) 	#Consolidation force on Z initial value
+	#step calculations
+variable	Intvmesh	equal $(20*v_Intv)		#value between each save-files for non-moving mesh files
+	#initial values for log variables
+variable	consoStep	equal $(v_runCal)		
+variable	compStep	equal $(v_consoStep+v_runCons)
+variable	endStep		equal $(v_compStep+v_runComp)
+variable	stpSv		equal step #step saver
+	#timesteps necessary to reach MaxE
+variable	runE		equal $(ceil(v_MaxE*v_Height/(v_CpVv*v_dt*v_Intv))*v_Intv)
+	#Take into account dt. Also Reduction on strK after rupture of specimen (q~.99qtarget)
+variable	strK		equal $(v_strK*v_dt)
+variable	strK2		equal $(v_strK/100)
+	#position variables if pistons need to be restarted
+variable	dh0			equal 0
+variable	dl1			equal 0
+variable	dl2			equal 0
+variable	dw1			equal 0
+variable	dw2			equal 0
+	#prepare restart file for Qcst sim
+if '$(v_tfI==3)' then 'variable fnm string QcstRupt.rest'
+
+#############################################		STL/Mesh Files		#############################################
+	# Execute STL files
+variable	stlModes index  1 21 22 31 32 4 5 -1
+variable	stlFname index  Boxbase PistonY1 PistonY2 PistonX1 PistonX2 PistonZ InsHelp	
+	#command to create a new stl using openscad file contained in folder meshes
+label doStl
+shell openscad -Dmode=${stlModes} -Dw=$(v_Width) -Dl=$(v_Length) -Dh=$(v_Height) &
+	 -o ${msh}/${stlFname}.stl ${msh}/BOX.scad
+next stlModes
+next stlFname
+jump 0_Execution.liggghts doStl
+
+#############################################		Execution		################################################
+### LOAD DATA ###
+#this script is executed through the file LiggghtsExe.sh, which sends the variable "tfI" with load info.
+	#tfI=0 => no load
+	#tfI=1 => load after insertion
+	#tfI=2 => load after consolidation
+	#if tf=3 - jump directly to Qcst test if simType ==4, else quit
+
+#Insertion
+if '$(v_tfI==0)' then 'jump src/1_GrInsertion.liggghts start'
+label endInsertion
+if '$(v_simType==0)' then 'quit' #if only insertion stop here
+
+#Calibration and Consolidation
+if '$(v_insCoeh==1)' then 'jump src/2_Consolidation_Loose.liggghts start' &
+elif '$(v_tfI<2)' 'jump src/2_Consolidation.liggghts start' &
+elif '$(v_tfI==3) && $(v_simType!=4)' " print 'Wrong simulation type chosen with Qcst load.' " " quit " &
+else 'jump src/2_LoadConso.liggghts start'
+label endConsolidation
+
+#Execute the correct type of simulation
+if   '$(v_simType==1)' then 'jump src/3_Triaxial_Drained.liggghts start' &
+elif '$(v_simType==2)' 'jump src/3_Triaxial_Proportional_Strain.liggghts start' &
+elif '$(v_simType==3)' 'jump src/3_Triaxial_Undrained.liggghts start' &
+elif '$(v_simType==4) && $(v_tfI==3) ' 'jump src/3_Triaxial_Qcst_Load.liggghts start' &
+elif '$(v_simType==4)' 'jump src/3_Triaxial_Qcst.liggghts start' &
+else " print 'No (or wrong) simulation type chosen' " " quit "
+label endCompression
+variable endStep equal ${stpSv}
+
+#############################################		End Print		###############################################
+
+########## Print For Matlab
+#The following lines will be printed in the top of the 'LiggghtstoMatlab.txt' file and will be read with Matlab
+log LiggghtstoMatlab.txt
+	#geometry
+print		"The following values give the Matlab app information about the simulaiton"
+print		""
+print		"Width=${Width}"
+print		"Length=${Length}"
+print		"Height=${Height}"
+	#Execution Type
+if '$(v_simType==1)' then " print 'SimType=Drained' " &
+elif '$(v_simType==4)' " print 'SimType=Qcst' " &
+else " print 'SimType=Undrained' " 
+print	'dl1=${dl1}'
+print	'dl2=${dl2}'
+print	'dw1=${dw1}'
+print	'dw2=${dw2}'
+print 	'dh=${dh0}'
+	#step
+print		"Timestep=${dt}"
+print		"StartCons=${consoStep}"
+print		"EndCons=${compStep}"
+print		"EndComp=${endStep}"
+print		"Intv=${Intv}"
+if '$(v_simType==4)' then " print 'QcstInit=${stpQst}' "  &
+	" print 'QcstRupt=${rptStep}' "  
+	#folder
+print		"vtkFolder=${part2}"
+print		"genFolder=${partg}"

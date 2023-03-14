@@ -1,0 +1,78 @@
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+#############################		Triaxial Proportional Strain		##############################
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+#Made by GONCALVES DE OLIVEIRA CHUEIRE Joao Augusto as part of PhD at INSA de Lyon
+
+label start
+#All pistons will be removed and turned into movement control
+	#save positions
+variable	dh	equal 0
+variable	dh0	equal $(v_dh0+f_sPz[9])
+variable	dl1	equal $(v_dl1+f_sPy1[8])
+variable	dl2	equal $(v_dl2+f_sPy2[8])
+variable	dw1	equal $(v_dw1+f_sPx1[7])
+variable	dw2	equal $(v_dw2+f_sPx2[7])
+variable	nVy	equal $(v_CpVv)
+variable	nVx	equal $(v_CpVv)
+	#delete stress controlled walls to create strain ones
+if   '$(v_vtkPlot!=1)' then 'jump src/3_Triaxial_Proportional_Strain.liggghts noVTK'
+undump		dmpsPz
+undump		dmpPy1
+undump		dmpPy2
+undump		dmpPx1
+undump		dmpPx2
+label	noVTK
+unfix		wlls
+unfix		sPz
+unfix		sPy1
+unfix		sPy2
+unfix		sPx1
+unfix		sPx2
+	#recreate structures in the correct position
+fix			sPz  all mesh/surface/stress file ${msh}/PistonZ.stl  type 2 scale 1. move 0.0 0.0 $(v_dh0)
+fix			sPy1 all mesh/surface/stress file ${msh}/PistonY1.stl type 2 scale 1. move 0.0 $(v_dl1) 0.0  
+fix			sPy2 all mesh/surface/stress file ${msh}/PistonY2.stl type 2 scale 1. move 0.0 $(v_dl2) 0.0 
+fix			sPx1 all mesh/surface/stress file ${msh}/PistonX1.stl type 2 scale 1. move $(v_dw1) 0.0 0.0 
+fix			sPx2 all mesh/surface/stress file ${msh}/PistonX2.stl type 2 scale 1. move $(v_dw2) 0.0 0.0 
+	#add movement
+fix			mvPz  all move/mesh mesh sPz linear  0.0 0.0 $(-v_CpVv)
+	#wall def
+fix			wlls all wall/gran model hertz tangential history  rolling_friction epsd2 &
+	mesh n_meshes 6 meshes mBse sPy1 sPy2 sPx1 sPx2 sPz 
+	#dump
+if   '$(v_vtkPlot!=1)' then 'jump src/3_Triaxial_Proportional_Strain.liggghts noVTK2'
+dump		dmpsPz all mesh/gran/VTK ${Intv} ${part2}/mesh_sPy1_*.vtk stress sPy1
+dump		dmpPy1 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPy1_*.vtk stress sPy1
+dump		dmpPy2 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPy2_*.vtk stress sPy2
+dump		dmpPx1 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPx1_*.vtk stress sPx1
+dump		dmpPx2 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPx2_*.vtk stress sPx2
+label noVTK2
+
+########## Compression Loop
+# Start Loop variables
+#update variables
+variable	w	equal (v_Width-f_sPx1[7]-v_dw1+f_sPx2[7]+v_dw2)
+variable 	l	equal (v_Length-f_sPy1[8]-v_dl1+f_sPy2[8]+v_dl2)
+variable	h	equal (v_Height+f_sPz[9]+v_dh0)
+variable	r 	equal (v_w/(v_l+v_w)) #ratio to better divide the strain
+
+#recalculate piston speeds
+variable	nVy	equal (v_l*(1-v_r)*0.5*(v_CpVv/v_h))
+variable	nVx	equal (v_w*(v_r)*0.5*(v_CpVv/v_h))
+
+#Remake the movements
+fix 		mvPy1 all move/mesh mesh sPy1 linear 0.0 (-v_nVy) 0.0 
+fix 		mvPy2 all move/mesh mesh sPy2 linear 0.0 (v_nVy) 0.0 
+fix 		mvPx1 all move/mesh mesh sPx1 linear (-v_nVx) 0.0 0.0 
+fix 		mvPx2 all move/mesh mesh sPx2 linear (v_nVx) 0.0 0.0 
+
+#run one interval
+run ${runCh} post no
+
+#Check loop
+if " $(v_runCh * v_ct) < ${runComp}" then "jump  src/3_Triaxial_Proportional_Strain.liggghts doComp"
+
+label goEnd
+#Save and leave
+write_restart ${svState}/Proportional.rest
+jump 0_Execution.liggghts endCompression

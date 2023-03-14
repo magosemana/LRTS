@@ -1,0 +1,58 @@
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+#############################		Drained Triaxial Execution		##############################
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+#Made by GONCALVES DE OLIVEIRA CHUEIRE Joao Augusto as part of PhD at INSA de Lyon
+
+label start
+
+#transform Pz into a displacement controlled meshes
+	#get piston z actual position
+variable	dh0		equal $(v_dh0+f_sPz[9])
+	#delete values
+if   '$(v_vtkPlot==1)' then 'undump dmpsPz'
+unfix		wlls
+unfix		sPz
+	#recreate structures in the correct position and add movement
+fix			sPz  all mesh/surface/stress file ${msh}/PistonZ.stl type 2 scale 1. move 0.0 0.0 $(v_dh0)
+fix			wlls all wall/gran model hertz tangential history  rolling_friction epsd2 &
+		mesh n_meshes 6 meshes mBse sPy1 sPy2 sPx1 sPx2 sPz 
+fix 		mvPz all move/mesh mesh sPz linear 0.0 0.0 $(-v_CpVv)
+if   '$(v_vtkPlot==1)' then 'dump dmpsPz all mesh/gran/VTK ${Intv} ${part2}/mesh_sPz_*.vtk stress sPz' 
+
+#Remake values 
+variable	ssZ	equal (f_sPz[3]/(v_w*v_l))
+variable	q	equal (sqrt(((v_ssZ-v_ssY)^2+(v_ssY-v_ssX)^2+(v_ssX-v_ssZ)^2)/2))
+
+#Change the piston speeds to the right value
+fix_modify	sPy1	servo/vel_max ${CpVh}
+fix_modify	sPy2	servo/vel_max ${CpVh}
+fix_modify	sPx1	servo/vel_max ${CpVh}
+fix_modify	sPx2	servo/vel_max ${CpVh}
+
+#Change thermo style
+thermo_style custom step f_sPz[3] v_ssZ v_ssY v_ssX v_q 
+
+#Run - Execute
+if '$(v_runE<v_runComp)' then 'variable rT	equal ${runE}' &
+else 'variable rT equal ${runComp}'
+run ${rT} post no
+
+#Save and go back to main file
+write_restart ${svState}/Drained.rest
+jump 0_Execution.liggghts endCompression
+
+
+########## Compression Loop
+# Loop variables - no longer needed since force function was added to the servo
+#variable	ct		equal 0 #How many times run3b was executed
+# Start loop
+#label doComp 
+#the target value of the Piston Z will be increased gradually in the start so it does not pack a punch right into the beggining
+#Check the deformation
+#if "$(v_ez) >= $(v_MaxE)" then "jump  3_Triaxial_Drained.liggghts goEnd"
+#variable 	ct equal $(v_ct+1) #count another run3b
+#run ${runCh} 
+#if " $(v_ct) == 4" then " "
+#if we run enough runCh to equal or surpass runComp then we can end the simulation, else go back to newPiston
+#if " $(v_runCh * v_ct) <= ${runComp}" then "jump 3_Triaxial_Drained.liggghts doComp"
+#label goEnd

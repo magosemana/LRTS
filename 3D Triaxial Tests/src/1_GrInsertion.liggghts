@@ -1,0 +1,161 @@
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#############################		Insertion 		#############################
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#Made by GONCALVES DE OLIVEIRA CHUEIRE Joao Augusto as part of PhD at INSA de Lyon
+
+## First part of the simulation. Start the simulation parameters, then create a volume for insertion 
+## and start inserting the grains. A great amount of grains will be inserted, excess grains will then 
+## be removed and the remaining will be saved in a 'part1Data.txt' file.
+
+##############Prepare simulation
+
+#### Initialization ####
+label start
+
+# Preliminaries
+units		si
+atom_style	sphere
+atom_modify	map array
+boundary	f f f   # describes boundaries of the domain as fixed(f) or periodic (p)
+newton		off     #for when short range operations
+communicate	single vel yes
+if '$(v_Eg>1e9)' then 'hard_particles yes'
+
+# Declare domain
+region			domain block -0.55 0.55 -0.4 1.5 -0.50 1.5 units box
+create_box		2 domain #Nbrs of the materials used in the simulation
+
+#Neighbor Listing  
+neighbor		${NeighSize} bin
+neigh_modify	delay 0 
+#neigh_modify	every 1 check no #describe how large neighbor list will be and how often to recalculate
+				  #affects speed and memory. Default value 0.001m
+
+if '$(v_difIns==0)' then 'variable	vIns equal ${v}' &		
+						'variable	uIns equal ${u}' &		
+						'variable	eIns equal ${e}' &	
+						'variable	rIns equal ${r}'		
+#Material and interaction properties
+    #when using multiple materials the properties are specified sequentially
+fix		m1 all property/global youngsModulus peratomtype ${Eg} ${Ew}
+fix		m2 all property/global poissonsRatio peratomtype ${vIns} ${vIns}
+fix		m3 all property/global coefficientRestitution peratomtypepair 2 ${eIns} ${eW} ${eW} ${eW}
+fix		m4 all property/global coefficientFriction peratomtypepair 2 ${uIns} 0. 0. 0. 
+fix		m5 all property/global coefficientRollingFriction peratomtypepair 2 ${rIns} 0. 0. 0.
+if '$(v_insCoeh==1)' then 'fix m6 all property/global cohesionEnergyDensity peratomtypepair 2 ${c} 0. 0. 0.'
+
+    #statements to specify material and interactions properties
+    #when using N materials the interactions are specified by the value N followed by a NxN Matrix
+
+#### Detailed Settings ####
+
+#Define the particle physics
+if '$(v_insCoeh==1)' then 'pair_style gran model hertz tangential history cohesion sjkr rolling_friction epsd2' &
+else 'pair_style gran model hertz tangential history rolling_friction epsd2'
+pair_coeff		* *
+    #define physics models. pair_coeff can describe different interactions between different particle types
+
+#Integrator
+fix		integrate all nve/sphere 
+    #declaration of the integrator to use. Always this one unless multi-sphere particles
+
+#Gravity
+fix		grav all gravity 9.81 vector 0. 0. -1.0
+
+#Time step
+timestep	${dt}
+    #Typically try to keep <= 20% of  the Rayleigh time
+
+#Thermodynamic output settings
+thermo_style	custom step atoms 	#quantity to be printed in the logfile
+thermo			${termInt} 			#how often to write the thermo quantities
+thermo_modify	norm no lost ignore #Set options. 'norm' normalizes output on a per
+		    #particle basis. 'lost ignore' simulation continues even after loss of a particle
+
+############## START INSERTION
+
+#Particle Insertion
+	#describe particles by type, radius and density
+	#Each seed must be a prime number bigger then 100k - 15485863, 15485867, 32452843, 
+	#32452867, 49979687, 49979693, 67867967, 67867979 (86028121 & 86028157 reserved for insertion)
+fix		pts1  all particletemplate/sphere 15485863 atom_type 1 density constant 2600 &
+	radius constant 0.006
+fix		pts21 all particletemplate/sphere 15485867 atom_type 1 density constant 2600 &
+	radius constant 0.0055
+fix		pts31 all particletemplate/sphere 32452867 atom_type 1 density constant 2600 &
+	radius constant 0.005
+fix		pts41 all particletemplate/sphere 49979693 atom_type 1 density constant 2600 &
+	radius constant 0.0045
+fix		pts51 all particletemplate/sphere 67867979 atom_type 1 density constant 2600 &
+	radius constant 0.004
+fix		pts22 all particletemplate/sphere 32452843 atom_type 1 density constant 2600 &
+	radius constant 0.0065
+fix		pts32 all particletemplate/sphere 49979687 atom_type 1 density constant 2600 &
+	radius constant 0.007
+fix		pts42 all particletemplate/sphere 67867967 atom_type 1 density constant 2600 &
+	radius constant 0.0075
+fix		pts52 all particletemplate/sphere 67914689 atom_type 1 density constant 2600 &
+	radius constant 0.008
+
+	#here we will define the percentages of each particle
+variable	dst1 	equal 5/25
+variable	dst2 	equal 4/25
+variable	dst3 	equal 3/25
+variable	dst4 	equal 2/25
+variable	dst5 	equal 1/25
+
+	#particle distribution -  V2 : fix pdd all particledistribution/discrete/numberbased 
+fix		pdd all particledistribution/discrete 86028121 9 pts1 ${dst1} & 
+	pts21 ${dst2} pts22 ${dst2} pts31 ${dst3} pts32 ${dst3} pts41 ${dst4} pts42 ${dst4} &
+	pts51 ${dst5} pts52 ${dst5}
+	#here we will declare the region of insertion		 
+region		factory prism $(-v_Width2*.99) $(v_Width2*.99) $(v_Length*.01) $(v_Length*.99) &
+	$(v_Height) $(v_Height*1.3) 0. 0. 0.
+	#here we will declare the rate and number of particles inserted
+fix		ins all insert/rate/region seed 86028157 distributiontemplate pdd &
+	verbose no nparticles ${Ngrains} particlerate ${InsrNb} insert_every ${InsrInt} &
+	all_in yes overlapcheck yes vel constant 0.0 0.0 -0.1 region factory ntry_mc 1000 
+           
+#Import Mesh from Cad
+fix		mBse all mesh/surface file ${msh}/Boxbase.stl	type 2 scale 1. #box base
+fix		mPy1 all mesh/surface file ${msh}/PistonY1.stl	type 2 scale 1. #pistonY+ will be placed as a wall
+fix		mPy2 all mesh/surface file ${msh}/PistonY2.stl	type 2 scale 1. #pistonY- will be placed as a wall
+fix		mPx1 all mesh/surface file ${msh}/PistonX1.stl	type 2 scale 1. #pistonX+ will be placed as a wall
+fix		mPx2 all mesh/surface file ${msh}/PistonX2.stl	type 2 scale 1. #pistonX- will be placed as a wall
+fix		mIhp all mesh/surface file ${msh}/InsHelp.stl	type 2 scale 1. #box around vertical piston
+
+#Declare walls - Declare which geometry should me use as actual walls
+fix		wlls all wall/gran model hertz tangential history  rolling_friction epsd2 &
+	mesh n_meshes 6 meshes mBse mPy1 mPy2 mPx1 mPx2 mIhp 
+
+#Check time step
+fix		ctg all check/timestep/gran 100 0.01 0.01 
+run		1	#run the time step check over 1 time step
+unfix	ctg
+    
+#Initialize VTK files. Jump if not needed
+if   '$(v_vtkPlot!=1)' then 'jump src/1_GrInsertion.liggghts noVTK'
+dump	dmpSph all custom/vtk ${Intv} ${part}/partcles_*.vtk x y z radius
+dump	dmpBas all mesh/gran/VTK ${Intvmesh} ${part}/mesh_base_*.vtk stress mBse
+dump	dmpPy1 all mesh/gran/VTK ${Intvmesh} ${part}/mesh_Y1_*.vtk stress mPy1
+dump	dmpPy2 all mesh/gran/VTK ${Intvmesh} ${part}/mesh_Y2_*.vtk stress mPy2
+dump	dmpPx1 all mesh/gran/VTK ${Intvmesh} ${part}/mesh_X1_*.vtk stress mPx1
+dump	dmpPx2 all mesh/gran/VTK ${Intvmesh} ${part}/mesh_X2_*.vtk stress mPx2
+dump	dmpIhp all mesh/gran/VTK ${Intvmesh} ${part}/mesh_iH_*.vtk stress mIhp
+label noVTK
+
+#### Execution ####
+run ${runIns} post no
+
+#Remove excess grains+
+region		del prism $(-v_Width2*1.1) $(v_Width2*1.1) -0.1 $(v_Length*1.1) &
+	$(v_Height-v_MaxRadius) $(v_Height*2) 0. 0. 0.
+delete_atoms	region del
+
+#Write the data on a file
+write_data ResetInsertion.txt
+
+#Clear the data above and be ready to restart
+clear
+
+jump 0_Execution.liggghts endInsertion

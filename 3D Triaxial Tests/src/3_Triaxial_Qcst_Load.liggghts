@@ -1,0 +1,104 @@
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+#############################		Drained Triaxial Qcst Force		##############################
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+#Made by GONCALVES DE OLIVEIRA CHUEIRE Joao Augusto as part of PhD at INSA de Lyon
+
+label start
+shell [ ! -d ".${svState}" ] && mkdir ${svState}
+
+#create constants for thermo analysis
+variable	w			equal (v_Width-f_sPx1[7]+f_sPx2[7])
+variable	l			equal (v_Length-f_sPy1[8]+f_sPy2[8])
+variable	h			equal (v_Height+f_sPz[9])
+variable	ssZ		equal (f_sPz[3]/(v_w*v_l))
+variable	ssY		equal ((f_sPy2[2]-f_sPy1[2])/(2*v_w*v_h))
+variable	ssX		equal ((f_sPx2[1]-f_sPx1[1])/(2*v_l*v_h))
+variable	p			equal (v_ssZ+v_ssY+v_ssX)/3
+variable	q			equal (sqrt(((v_ssZ-v_ssY)^2+(v_ssY-v_ssX)^2+(v_ssX-v_ssZ)^2)/2))
+	#q value (to check if cst)
+
+#remake thermo
+thermo_style custom step f_sPz[9] f_sPz[3] f_sPy1[2] f_sPx1[1] v_ssZ v_ssY v_ssX v_q v_p
+
+######### First part : apply maximal vertical stress
+#Change the piston speeds to the right value
+fix_modify	sPz  	servo/vel_max $(2*v_CpVv)
+fix_modify	sPy1 	servo/vel_max ${CpVh}
+fix_modify	sPy2 	servo/vel_max ${CpVh}
+fix_modify	sPx1 	servo/vel_max ${CpVh}
+fix_modify	sPx2 	servo/vel_max ${CpVh}
+
+######### Second part : change p without changing q
+variable	bQst	equal ${stpSv} #initial step for this Qcst rerun
+variable	dSig	equal $((v_bQst-(2*v_runCons+v_runCal))*v_strK*v_dt)#reduction on stress before restart
+variable	p0		equal $((v_CpS+2*v_CsS)/3 -v_dSig)					#p value before restart
+variable	CpSv 	equal ((v_CpS-v_dSig)-(v_stpSv-v_bQst)*v_strK2*v_dt)#stress reduced in f of step evolution
+variable	CsSv	equal ((v_CsS-v_dSig)-(v_stpSv-v_bQst)*v_strK2*v_dt)#stress reduced in f of step evolution
+variable	runQ	equal $(ceil((v_p0)/(v_strK2*v_dt*v_Intv))*v_Intv)	#run value until Sig3=0
+variable	Fz		equal (v_CpSv*v_w*v_l)
+variable	Fy		equal (v_CsSv*v_w*v_h)
+variable	Fx		equal (v_CsSv*v_l*v_h)
+variable	Z		equal $(f_sPz[9]) #store the old position of Pz for analysis
+variable	chk		equal 1
+
+#change thermo
+thermo_style	custom step f_sPz[9] v_CpSv v_CsSv v_ssZ v_ssY v_ssX v_q v_p
+
+#modify piston force values and Pz speed so it matches the others (high value)
+fix_modify	sPz  	servo/target_val v_Fz
+fix_modify	sPy1 	servo/target_val v_Fy
+fix_modify	sPy2 	servo/target_val v_Fy
+fix_modify	sPx1 	servo/target_val v_Fx
+fix_modify	sPx2 	servo/target_val v_Fx
+
+if '$(v_runQ<v_runComp)' then 'variable rT equal ${runQ}' &
+else 'variable rT equal ${runComp}'
+
+#When the direction of Pz movement change, the value v_strK will be reduced to allow Pz enough time to reach its target stress. So when the new position of Pz is smaller then the position of the old step (compression) we change it
+run ${rT} post no
+jump 0_Execution.liggghts endCompression
+
+
+
+######### Second part : change p without changing q
+####Qcst Second calculation type
+#variable CpSv 	equal (v_CpS-v_ct*v_runQcst*v_strK*v_dt) #stress reduced in f of step evolution
+#variable CsSv	equal (v_CsS-v_ct*v_runQcst*v_strK*v_dt) #stress reduced in f of step evolution
+
+#thermo_style	custom step atoms v_CpSv v_CsSv v_sigZ v_sigY v_sigX v_q v_p
+
+##variable 	Fz	equal (v_CpSv*v_w*v_l)
+#variable 	Fy	equal (v_CsSv*v_w*v_h)
+#variable 	Fx	equal (v_CsSv*v_l*v_h)
+
+#fix_modify	sPz  servo/target_val v_Fz 
+#fix_modify	sPy1 servo/target_val v_Fy  
+#fix_modify	sPy2 servo/target_val v_Fy 
+#fix_modify	sPx1 servo/target_val v_Fx 
+#fix_modify	sPx2 servo/target_val v_Fx 
+
+#variable	ct		equal 0 #How many times run3b was executed
+# Start loop
+#label doComp 
+#variable	ct		equal $(v_ct+1)
+#if '$((v_ct*v_runQcst)>v_runComp)' then 'jump 0_Execution.liggghts endCompression' &
+#if '$((v_sigZ+v_sigY+v_sigX)<10^4)' 'jump 0_Execution.liggghts endCompression' &
+#else 'run ${runQcst}' 'jump src/3_Triaxial_Qcst_Eq.liggghts doComp' 
+
+
+########## Compression Loop
+# Loop variables - no longer needed since force function was added to the servo
+#variable	ct		equal 0 #How many times run3b was executed
+# Start loop
+#label doComp 
+#the target value of the Piston Z will be increased gradually in the start so it does not pack a punch right into the beggining
+#Check the deformation
+#if "$(v_ez) >= $(v_MaxE)" then "jump  3_Triaxial_Drained.liggghts goEnd"
+#variable 	ct equal $(v_ct+1) #count another run3b
+#run ${runCh} 
+#if " $(v_ct) == 4" then " "
+#if we run enough runCh to equal or surpass runComp then we can end the simulation, else go back to newPiston
+#if " $(v_runCh * v_ct) <= ${runComp}" then "jump 3_Triaxial_Drained.liggghts doComp"
+#label goEnd
+
+

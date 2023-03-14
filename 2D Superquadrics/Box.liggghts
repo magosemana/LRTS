@@ -1,0 +1,479 @@
+#############################	Vertical compression	#############################
+#Made by GONCALVES DE OLIVEIRA CHUEIRE Joao Augusto as part of PhD at INSA de Lyon
+
+#
+##
+### Description : insert a set of particles into a rectangular box allowing them 
+### to settle under gravity. After, add controlled movement to 2 pistons, one in z-
+### and two in y. A constant stress will be applied untill equilibrium. Then the 
+### stress on the z piston will be increased until a certain vertical strain value. 
+### We will then observe the way the grains organize themselfs
+### The particles in this simulation will be cylindrical, creating a plan-symetrical
+### test. The particles are created with a 'superquadric' form, with Z being the 
+### cylinder principal axis.
+### We will then observe the way the grains organize themselfs
+##
+#
+
+#First part	=> Grains Insertion, save grains values & restart simulation
+#Second part	=> Load grains, restart simulation properties & pistZ calibration
+#Third part	=> Consolidation
+#Fourth part	=> Compression
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#############################		Variables		#############################
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+########## Exterior parameterss
+variable	ExpWidth 	equal 0.0101	#experiment widith, x in meters
+variable	ExpLength 	equal 0.35	#experiment length, y in meters
+variable	ExpHeight 	equal 0.45	#horizontal piston height, z in meters
+variable	MaxRadius	equal 0.005	#maximal radius of the simulation
+variable	MaxE		equal 0.12	#strain target to stop simulation 0.2=20%
+
+########## Simulation parameters
+variable	Eg 			equal 1e8	#Young modulus grains 
+variable	Ew 			equal 1e8	#Young modulus walls
+variable	V 			equal 0.25	#Possoin coef
+variable	u 			equal 0.57	#friction coefficient
+variable	e 			equal 0.5	#restitution coefficient
+variable	rf 			equal 0.5	#rolling friction coefficient
+
+########## Simulation parameters
+	#global values
+variable	NeighSize	equal 0.01	#size of neighbor bins
+variable	dt 	  		equal 2e-5	#timestep value in seconds
+	#insertion values
+variable	Ngrains   	equal 2e3	#number of grains
+variable	InsrNb		equal 2.5e3 	#Number of particles inserted per second
+variable	InsrInt		equal 2.5e3	#Interval between insertions
+	#saving intervals
+variable	Intv 	  	equal 1250	#Interval between savefiles
+	#running times
+variable	run1 	  	equal 75e3	#nb of steps insertion (first part)
+variable	run1b	  	equal 25e3	#nb of steps calibration (second part)
+variable	run2 	  	equal 100e3	#nb of steps consolidation (third part)
+variable	run3 	  	equal 700e3	#nb of steps compression (fourth part)
+variable	run3b 	  	equal 25e3	#interval between pistonZ remakes (also fourth part)
+	#piston parameters
+variable	CpStress 	equal 5e8	#maximal vertical stress, plan x.y in Pa
+variable	CsStress 	equal 1e5	#maximal horizontal stress, plan y.z in Pa
+variable	CsSpeed  	equal 0.02	#speed of pistons in Consolidation part
+variable	CpSpeedH 	equal 0.1	#speed of pistons in Compression part
+variable	CpSpeedV 	equal 0.02	#speed of pistons in Compression part
+variable	KP 	  		equal 1		#value to control piston advancing speed on manual mode	
+variable	KD			equal 0
+
+########## File details
+variable	part 		string post1
+variable	part2 		string post2
+variable	partg 		string generalvariables
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#############################		Prepare Simulations		#############################
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+########## Small Calculations
+	#geometric calculations
+variable	ExpWidth2 	equal $(v_ExpWidth/2) 			#half box witdh, value used on the grain insertion
+	#vertical force
+variable 	Fz1			equal $(v_CsStress*v_ExpLength*v_ExpWidth) #used for consolidation
+variable 	Fz2			equal $(v_CpStress*v_ExpLength*v_ExpWidth)	#used for compression
+	#horizontal force
+variable 	Fy			equal $(v_CsStress*v_ExpWidth*v_ExpHeight)
+	#step calculations
+variable	Intvmesh	equal $(20*v_Intv)		#value between each savefiles for non-moving mesh files
+variable	consoStep 	equal $(v_run1b)
+variable	compStep 	equal $(v_consoStep+v_run2)
+variable	endStep 	equal $(v_compStep+v_run3)
+
+########## Loop variables
+variable 	cntr 		equal 0 #How many times run3b was executed
+variable	eps			equal 0	#Calculate lagrangian deformation
+variable	dh			equal 0	#Height storing for deformation calculation
+
+########## Print For Matlab
+#The following lines will be printed in the top of the 'log.liggghts' file and will be read with matlab
+	#geometry
+print		""
+print		"ExpWidth=${ExpWidth}"
+print		"ExpLength=${ExpLength}"
+print		"ExpHeight=${ExpHeight}"
+	#step
+print		"Timestep=${dt}"
+print		"StartCons=${consoStep}"
+print		"EndCons=${compStep}"
+print		"EndComp=${endStep}"
+print		"Intv=${Intv}"
+print		"PistZchInt=${run3b}"
+	#folder
+print		"vtkFolder=${part2}"
+print		"genFolder=${partg}"
+print		""
+
+#### Execute STL files
+variable	stlModes index  1 21 22 31 32 4 5 -1	#radius for stress/strain calculation
+variable	stlFname index  Boxbase Boxglass1 Boxglass2 PistonY1 PistonY2 PistonZ InsHelp	#radius for stress/strain calculation
+
+#command to create a new stl using openscad file contained in folder meshes
+
+label doStl
+shell cd meshes
+shell openscad -Dmode=${stlModes} -Dw=$(v_ExpWidth) -Dl=$(v_ExpLength) -Dh=$(v_ExpHeight) &
+	 -o ${stlFname}.stl BOX.scad
+next stlModes
+next stlFname
+shell cd ..
+jump Box.liggghts doStl
+#When the the intex variable arrives at an end the next 'jump' will not be done thus there is no
+#need to do an 'if' to check the variable state.
+
+### Jumper ###
+#if file containing grains data is found, the insertion of grains will not be done
+if '$(v_tfI>0)' then &
+	'read_restart comp*.resData' &
+	'jump Box.liggghts loadFile' 
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#############################		First Part -Insertion		#############################
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+## First part of the simulation. Start the simulation parameters, then create a volume for insertion 
+## and start inserting the grains. A great amount of grains will be inserted to inforce the asked dis-
+## distribution, excess grains will then be removed.
+
+##############Prepare simulation
+
+#### Initialization ####
+
+# Preliminaries
+units		si
+atom_style	superquadric
+atom_modify	map array
+boundary	f f f   # describes boundaries of the domain as fixed(f) or periodic (p)
+label		loadFile
+newton		off     #for when shortrange operations
+communicate	single vel yes
+if '$(v_Eg>1e9)' then 'hard_particles yes'
+
+# Declare domain
+region		domain block -0.3 0.6 -0.1 1. -0.05 0.05 units box
+create_box	6 domain #Nbrs of the materials used in the simulation
+
+#Neighbor Listing  
+neighbor	${NeighSize} bin
+neigh_modify	delay 0 
+#neigh_modify    every 1 check no #describe how large neighbor list will be and how often to recalculate
+				  #affects speed and memory. Default value 0.001m
+
+#Material and interaction properties
+    #when using multiple materials the properties are specified sequentially
+fix		m1 all property/global youngsModulus peratomtype ${Eg} ${Eg} ${Eg} ${Eg} ${Eg} ${Ew}
+fix		m2 all property/global poissonsRatio peratomtype ${V} ${V} ${V} ${V} ${V} ${V}
+fix		m3 all property/global coefficientRestitution peratomtypepair 6 &
+			${e} ${e} ${e} ${e} ${e} 0.1 &
+			${e} ${e} ${e} ${e} ${e} 0.1 &
+			${e} ${e} ${e} ${e} ${e} 0.1 &
+			${e} ${e} ${e} ${e} ${e} 0.1 &
+			${e} ${e} ${e} ${e} ${e} 0.1 &
+			0.1  0.1  0.1  0.1  0.1  0.1
+fix		m4 all property/global coefficientFriction peratomtypepair 6 &
+			${u} ${u} ${u} ${u} ${u} 0. &
+			${u} ${u} ${u} ${u} ${u} 0. &
+			${u} ${u} ${u} ${u} ${u} 0. &
+			${u} ${u} ${u} ${u} ${u} 0. &
+			${u} ${u} ${u} ${u} ${u} 0. &
+			0.   0.   0.   0.   0.   0. 
+fix		m5 all property/global coefficientRollingFriction peratomtypepair 6 & 
+			${rf} ${rf} ${rf} ${rf} ${rf} 0. &
+			${rf} ${rf} ${rf} ${rf} ${rf} 0. &
+			${rf} ${rf} ${rf} ${rf} ${rf} 0. &
+			${rf} ${rf} ${rf} ${rf} ${rf} 0. &
+			${rf} ${rf} ${rf} ${rf} ${rf} 0. &
+			0.    0.    0.    0.    0.    0. 	
+    #statements to specify material and interactions properties
+    #when using N materials the interactions are specified by the value N followed by a NxN Matrix
+
+#### Detailed Settings ####
+
+#Define the particle physics
+pair_style	gran model hertz tangential history rolling_friction epsd2 surface superquadric
+pair_coeff	* *
+    #define physics models. pair_coeff can describe different interactions between diferent particle types
+
+#Integrator
+fix		integrate all nve/superquadric integration_scheme 1
+    #declaration of the integrator to use. Always this one unless multisphere particles
+
+#Gravity
+fix		grav all gravity 9.81 vector 0. -1. 0. 
+
+#Time step
+timestep	${dt}
+    #Typically try to keep <= 20% of  the Rayleigh time
+
+#Thermodynamic output settings
+thermo_style    custom step atoms 	#quantity to be printed in the logfile
+thermo          $(2*v_Intv) 		#how often to write the thermo quantities
+thermo_modify   norm no lost ignore 	#Set options. 'norm' normalizes output on a per
+		    #particle basis. 'lost ignore' simulation continues even after loss of a particle
+
+############## START INSERTION
+
+#Particle Insertion
+	#describle particles by type, radius and density
+	#Each seed must be a prime number bigger then 10k -15485863, 15485867, 32452843, 
+	#32452867, 49979687, 49979693, 67867967, 67867979
+fix		pts1  all particletemplate/superquadric 15485863 atom_type 1 density constant 2600 &
+	shape constant 0.004 0.004 0.0039 blockiness constant 8. 2.
+fix		pts21 all particletemplate/superquadric 15485867 atom_type 2 density constant 2600 &
+	shape constant 0.0035 0.0035 0.0039 blockiness constant 8. 2.
+fix		pts31 all particletemplate/superquadric 32452867 atom_type 4 density constant 2600 &
+	shape constant 0.003 0.003 0.0039 blockiness constant 8. 2.
+fix		pts22 all particletemplate/superquadric 32452843 atom_type 3 density constant 2600 &
+	shape constant 0.0045 0.0045 0.0039 blockiness constant 8. 2.
+fix		pts32 all particletemplate/superquadric 49979687 atom_type 5 density constant 2600 &
+	shape constant 0.005 0.005 0.0039 blockiness constant 8. 2.
+
+#here we will define the percentages of each particle
+variable	dst1 equal 12/24
+variable	dst2 equal 8/24
+variable	dst3 equal 4/24
+
+fix			pdd all particledistribution/discrete 86028121 5 pts1 ${dst1} pts21 ${dst2} pts22 ${dst2} &
+	pts31 ${dst3} pts32 ${dst3}
+	#here we will declare the rate and number of particles inserted
+region		factory prism  0 $(v_ExpLength) $(v_ExpHeight) $(v_ExpHeight*1.2) &
+	$(-v_ExpWidth2) $(v_ExpWidth2) 0. 0. 0.
+	#here we will declare the rate and number of particles inserted
+fix			ins all insert/rate/region seed 86028157 distributiontemplate pdd &
+	verbose no nparticles ${Ngrains} particlerate ${InsrNb} insert_every ${InsrInt} &
+	all_in yes overlapcheck yes vel constant 0.0 0.0 -0.1 region factory ntry_mc 1000 
+
+#Import Mesh from Cad
+	#all cad files were drawn in cm, so they have to be scaled by a 0.01 factor
+fix			mBse all mesh/surface file meshes/Boxbase.stl	type 6 scale 1. #box base
+fix			mGl1 all mesh/surface file meshes/Boxglass1.stl	type 6 scale 1. #box glass walls side x-
+fix			mGl2 all mesh/surface file meshes/Boxglass2.stl	type 6 scale 1. #box glass walls side x+
+fix			mIhp all mesh/surface file meshes/InsHelp.stl	type 6 scale 1. #insertion helper, box around PistZ location
+fix 		sPy1 all mesh/surface/stress/servo file meshes/PistonY1.stl type 6 scale 1. &
+	com 0. 0. 0. ctrlPV force axis 1. 0. 0. target_val $(v_Fy) vel_max ${CsSpeed} kp ${KP} kd ${KD}
+fix 		sPy2 all mesh/surface/stress/servo file meshes/PistonY2.stl type 6 scale 1. &
+	com 0. 0. 0. ctrlPV force axis -1. 0. 0. target_val $(v_Fy) vel_max ${CsSpeed} kp ${KP} kd ${KD}
+
+#block the movement of all pistons but the pistonZ, since it is the only one that does not touch the grains
+fix_modify	sPy1 servo/integrate stop 
+fix_modify	sPy2 servo/integrate stop 
+
+#Declare walls - Declare which geometry sholde me use as actual walls
+fix			walls1 all wall/gran model hertz tangential history rolling_friction epsd2 surface & 
+	superquadric mesh n_meshes 6 meshes mBse mGl1 mGl2 sPy1 sPy2 mIhp
+
+#Compute contact and forces
+compute 	pgl all pair/gran/local pos id force contactPoint delta
+
+#Check time step
+fix			ctg all check/timestep/gran 100 0.01 0.01 
+run			1	#run the time step check over 1 time step
+unfix		ctg
+
+#Initialize dump file
+dump		dmpSph all custom/vtk ${Intv} ${part1}/partclesA_*.superq.vtk type id type mass x y z &
+	vx vy vz fx fy fz omegax omegay omegaz radius shapex shapey shapez quat1 quat2 quat3 quat4 &
+	blockiness1 blockiness2 tqx tqy tqz angmomx angmomy angmomz
+dump		dmpBse all mesh/gran/VTK ${Intvmesh} ${part}/mesh_Bse_*.vtk stress mBse
+dump		dmpGl1 all mesh/gran/VTK ${Intvmesh} ${part}/mesh_Gl1_*.vtk stress mGl1
+dump		dmpGl2 all mesh/gran/VTK ${Intvmesh} ${part}/mesh_Gl2_*.vtk stress mGl2
+dump		dmpPy1 all mesh/gran/VTK ${Intvmesh} ${part}/mesh_Py1_*.vtk stress sPy1
+dump		dmpPy2 all mesh/gran/VTK ${Intvmesh} ${part}/mesh_Py2_*.vtk stress sPy2
+dump		dmpIhp all mesh/gran/VTK ${Intvmesh} ${part}/mesh_Ihp_*.vtk stress mIhp
+
+if '$(v_tfI>0)' then 'jump Box.liggghts loadFile2' 
+
+#### Execution ####
+run		${run1}
+
+#Remove excess grains+
+region		del prism  -0.1 $(v_ExpLength*1.1) $(v_ExpHeight-v_MaxRadius) $(v_ExpHeight*1.5) &
+	$(-v_ExpWidth2) $(v_ExpWidth2) 0. 0. 0.
+delete_atoms	region del
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#############################		Second Part - Calibration		#############################
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+## Grains file will be Loaded. As the simulation was cleared, all the initialization parameters must be remade.
+## Then the pisntonZ will be slowly advanced to touch the grains. The max stress it can aplly is really small
+## so it should not impact the simulation.
+#create groups
+group	g1 type 1
+group	g2 type 2
+group	g3 type 3
+group	g4 type 4
+group	g5 type 5
+
+label loadFile2
+#Delete things no longer needed
+unfix	ins
+undump	dmpBse
+undump	dmpGl1
+undump	dmpGl2
+undump	dmpPy1
+undump	dmpPy2
+undump	dmpIhp
+undump	dmpSph
+unfix	mIhp
+unfix	walls1
+
+#pistons as servo
+fix 		sPz  all mesh/surface/stress/servo file meshes/PistonZ.stl type 6 scale 1. &
+	com 0. 0. 0. ctrlPV force axis 0. -1. 0. target_val $(v_Fz1*0.01) vel_max ${CsSpeed} kp ${KP} kd ${KD}	
+
+#Change thermo so we cna see what is happening in the terminal
+thermo_style	custom step atoms f_sPz[8] f_sPy1[7] f_sPy2[7] 
+
+#Remaking the walls
+fix			walls1 all wall/gran model hertz tangential history rolling_friction epsd2 surface & 
+	superquadric mesh n_meshes 7 meshes mBse mGl1 mGl2 sPy1 sPy2 sPz mStp
+
+#Adding new computing elements, to calculate important information
+compute 	ctc all contact/atom	#contacts nb 
+compute 	dpl all displace/atom	#each particle displacement
+compute		sts all stress/atom 	#particle stress through Love-Webber
+compute		ken all ke/atom		#atom knectic energy
+	
+#adding new dump files for drawing data -- paraview (.vtk)
+dump		dmpSph1 g1 custom/vtk ${Intv} ${part2}/partclesA_*.superq.vtk type id type mass x y z &
+	vx vy vz fx fy fz omegax omegay omegaz radius shapex shapey shapez quat1 quat2 quat3 quat4 &
+	blockiness1 blockiness2 tqx tqy tqz angmomx angmomy angmomz
+dump		dmpSph2 g2 custom/vtk ${Intv} ${part2}/partclesB_*.superq.vtk type id type mass x y z &
+	vx vy vz fx fy fz omegax omegay omegaz radius shapex shapey shapez quat1 quat2 quat3 quat4 &
+	blockiness1 blockiness2 tqx tqy tqz angmomx angmomy angmomz
+dump		dmpSph3 g3 custom/vtk ${Intv} ${part2}/partclesC_*.superq.vtk type id type mass x y z &
+	vx vy vz fx fy fz omegax omegay omegaz radius shapex shapey shapez quat1 quat2 quat3 quat4 &
+	blockiness1 blockiness2 tqx tqy tqz angmomx angmomy angmomz
+dump		dmpSph4 g4 custom/vtk ${Intv} ${part2}/partclesD_*.superq.vtk type id type mass x y z &
+	vx vy vz fx fy fz omegax omegay omegaz radius shapex shapey shapez quat1 quat2 quat3 quat4 &
+	blockiness1 blockiness2 tqx tqy tqz angmomx angmomy angmomz
+dump		dmpSph5 g5 custom/vtk ${Intv} ${part2}/partclesE_*.superq.vtk type id type mass x y z &
+	vx vy vz fx fy fz omegax omegay omegaz radius shapex shapey shapez quat1 quat2 quat3 quat4 &
+	blockiness1 blockiness2 tqx tqy tqz angmomx angmomy angmomz
+dump		frchain all local/gran/vtk ${Intv} ${part2}/forcechain*.vtk pgl
+
+#adding new dump files for the meshes -- paraview (.vtk)
+dump		dumpstress1 all mesh/gran/VTK ${Intvmesh} ${part2}/mesh_base_*.vtk stress mBse
+dump		dumpstress2 all mesh/gran/VTK ${Intvmesh} ${part2}/mesh_glass_*.vtk stress mGl1
+dump		dumpstress3 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPz_*.vtk stress sPz
+dump		dumpstress4 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPy1_*.vtk stress sPy1
+dump		dumpstress5 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPy2_*.vtk stress sPy2
+dump		dumpstress6 all mesh/gran/VTK ${Intv} ${part2}/mesh_stop_*.vtk stress mStp
+
+if '$(v_tfI>0)' then 'jump Box.liggghts loadFile3' 
+run		${run1b}
+label loadFile3
+variable	VertDpl1 equal $(f_sPz[8])
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#############################		Third Part - Consolidation		#############################
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+## In this part all the pistons will apply the same stress to the grains. The function 'servo' is actually con-
+## trolled by a Force, this value is calculated at the start of the file.
+
+#restart pistons movement
+fix_modify	sPy1 servo/integrate start 
+fix_modify	sPy2 servo/integrate start 
+
+#modify the target force of the all pistons
+fix_modify	sPz servo/target_val ${Fz1} 
+
+#adding new dump files for general data -- matlab (.txt)
+fix			servostress all ave/time 1 1 ${Intv} f_sPz[2] f_sPz[8] f_sPy1[1] & 
+	f_sPy1[7] f_sPy2[1] f_sPy2[7] file ${partg}/servoForce.txt
+dump		grains all custom ${Intv} ${partg}/grains*.txt id z x y  radius &
+	c_ctc c_dpl[3] c_dpl[1] c_dpl[2] c_sts[3] c_sts[1] c_sts[2] c_sts[5] c_sts[6] &
+	c_sts[4] c_ken omegaz omegax omegay  
+dump		contactForces all local ${Intv} ${partg}/contForce*.txt c_pgl[7] &
+	c_pgl[8] c_pgl[12] c_pgl[10] c_pgl[11] c_pgl[15] c_pgl[13] c_pgl[14] c_pgl[16]
+	#cont forces ID1 ID2 Fx Fy Fz Cpx Cpy Cpz Delta
+
+#variable for calculation info
+
+if '$(v_tfI>0)' then 'jump Box.liggghts loadFile4' 
+run		${run1b}
+label loadFile4
+variable	VertDpl2 equal $(f_sPz[8])
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#############################		Fourth Part - Compression		#############################
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+## All pistons will mantain the same stress, while the pistonZ will have it's value augmented with the objective
+## of causing the failure of the created granular material.
+
+#This time we dont need to change folders, the dump rate will stay the same. All we need is to know in wich step 
+#the effort changed for the effort analysis so wi will note that
+fix_modify	sPz  servo/vel_max ${CpSpeedV}
+fix_modify	sPz  servo/target_val ${Fz2} 
+fix_modify	sPy1 servo/vel_max ${CpSpeedH}
+fix_modify	sPy2 servo/vel_max ${CpSpeedH}
+
+variable 	dh equal $(f_sPz[9])
+
+#Save restart file
+restart ${run3b} reFolder/comp*.resData
+
+### Compression Loop
+label doComp 
+
+#Check the deformation
+variable 	eps equal $(v_eps-(f_sPz[9]-v_dh)/(v_ExpHeight+v_dh))
+if "$(v_eps) >= $(v_MaxE)" then "jump  Box.liggghts goEnd"
+variable 	dh equal $(f_sPz[9])	#update dh for next loop
+
+#Recalculate piston Y and X target value to adapt to changing Pz
+variable 	nFy		equal $(v_CsStress*v_ExpWidth*(v_ExpHeight+f_sPz[8]))
+
+fix_modify	sPy1 servo/target_val ${nFy} 
+fix_modify	sPy2 servo/target_val ${nFy} 
+
+variable 	cntr equal $(v_cntr+1) #count another run3b
+run ${run3b} 
+
+#if we run enough run3b to equal or surpass run3 then we can end the simulation, else go back to newPiston
+if " $(v_run3b * v_cntr) < ${run3}" then "jump  Box.liggghts doComp"
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#############################		End Print Var		#############################
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+label goEnd
+variable	consDpl equal $(v_VertDpl2-v_VertDpl1)
+variable	compDpl equal $(f_sPz[8]+v_pZh-v_VertDpl2)
+print		"     "
+print		"Vertical consolidation force : ${Fz1} N"
+print		"Vertical compression force : ${Fz2} N"
+print		"Final Horizontal force : ${Fy} N"
+print		"     "
+print		"Consolidation Displacement :${consDpl} m"
+print		"Mean Consolidation Speed :$(v_consDpl/(v_run2*v_dt)) m/s"
+print		"Consolidation Displacement :${compDpl} m"
+print		"Mean Compression Speed :$(v_compDpl/(v_run3b * v_cntr*v_dt)) m/s"
+
+########## Print For Matlab
+#The following lines will be printed in the top of the 'LiggghtstoMatlab.txt' file and will be read with matlab
+log LiggghtstoMatlab.txt
+	#geometry
+print		"The following values give the Matlab app information about the simulaiton"
+print		""
+print		"ExpWidth=${ExpWidth}"
+print		"ExpLength=${ExpLength}"
+print		"ExpHeight=${ExpHeight}"
+	#step
+print		"Timestep=${dt}"
+print		"StartCons=${consoStep}"
+print		"EndCons=${compStep}"
+print		"EndComp=${endStep}"
+print		"Intv=${Intv}"
+print		"PistZchInt=${run3b}"
+	#folder
+print		"vtkFolder=${part2}"
+print		"genFolder=${partg}"
+print		""
+
+

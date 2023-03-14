@@ -1,0 +1,177 @@
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+#############################	 Consolidation Execution		##############################
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+#Made by GONCALVES DE OLIVEIRA CHUEIRE Joao Augusto as part of PhD at INSA de Lyon
+
+#############################		Calibration		#############################
+## Grains file will be Loaded. As the simulation was cleared, all the initialization parameters must be remade.
+## Then the pisntonZ will be slowly advanced to touch the grains. The max stress it can apply is really small
+## so it should not impact the simulation.
+
+##############Prepare simulation
+#### Initialization ####
+label start
+# Preliminaries
+units		si
+atom_style	sphere
+atom_modify	map array
+boundary	f f f	# describes boundaries of the domain as fixed(f) or periodic (p)
+newton		off		#for when short-range operations
+communicate	single vel yes
+if '$(v_Eg>1e9)' then 'hard_particles yes'
+read_data	ResetInsertion.txt #Read data from the insertion file
+
+#Neighbor Listing  
+neighbor	${NeighSize} bin
+neigh_modify	delay 0 
+
+#Material and interaction properties
+fix		m1 all property/global youngsModulus peratomtype ${Eg} ${Ew}
+fix		m2 all property/global poissonsRatio peratomtype ${vIns} ${vIns}
+fix		m3 all property/global coefficientRestitution peratomtypepair 2 ${eIns} ${eW} ${eW} ${eW}
+fix		m4 all property/global coefficientFriction peratomtypepair 2 ${uIns} 0. 0. 0. 
+fix		m5 all property/global coefficientRollingFriction peratomtypepair 2 ${rIns} 0. 0. 0.
+if '$(v_insCoeh==1)' then 'fix m6 all property/global cohesionEnergyDensity peratomtypepair 2 ${c} 0. 0. 0.'
+
+#### Detailed Settings ####
+
+#Define the particle physics
+pair_style gran model hertz tangential history cohesion sjkr rolling_friction epsd2
+pair_coeff	* *
+
+#Integrator
+fix		integrate all nve/sphere 
+
+#Gravity
+fix		grav all gravity 9.81 vector 0. 0. -1.0
+
+#Time step
+timestep	${dt} 
+	#Typically try to keep <= 20% of  the Rayleigh time
+
+#Thermodynamic output settings
+thermo_style	custom step atoms 	#quantity to be printed in the log-file
+thermo			${termInt} 			#how often to write the thermo quantities
+thermo_modify	norm no lost ignore #Set options. 'norm' normalizes output on a per
+
+#Adding new computing elements, to calculate important information
+compute 	ctc all contact/atom	#contacts nb 
+compute 	dpl all displace/atom	#each particle displacement
+compute		pgl all pair/gran/local pos id force contactPoint delta #grain-grain contact
+compute		sts all stress/atom 	#particle stress through Love-Webber
+compute		ken all ke/atom			#atom kinetic energy
+#compute		pen all pe/atom		#atom potential energy
+
+##############Prepare for calibration
+#Import Mesh from Cad
+	#all cad files were drawn in cm, so they have to be scaled by a 0.01 factor
+fix			mBse all mesh/surface file ${msh}/Boxbase.stl type 2 scale 1. #box base
+	#pistons as servo
+fix 		sPz  all mesh/surface/stress/servo file ${msh}/PistonZ.stl  type 2 scale 1. move 0. 0. ${dh0} & 
+	com 0. 0. 0. ctrlPV force axis 0. 0. -1. target_val $(v_Fz*0.01) vel_max ${CsV} kp ${KP} kd ${KD}	
+fix 		sPy1 all mesh/surface/stress/servo file ${msh}/PistonY1.stl type 2 scale 1. move 0. ${dl1} 0. &
+	com 0. 0. 0. ctrlPV force axis 0. 1. 0.  target_val $(v_Fy*0.01) vel_max ${CsV} kp ${KP} kd ${KD}
+fix 		sPy2 all mesh/surface/stress/servo file ${msh}/PistonY2.stl type 2 scale 1. move 0. ${dl2} 0. &
+	com 0. 0. 0. ctrlPV force axis 0. -1. 0. target_val $(v_Fy*0.01) vel_max ${CsV} kp ${KP} kd ${KD}
+fix			sPx1 all mesh/surface/stress/servo file ${msh}/PistonX1.stl type 2 scale 1. move ${dw1} 0. 0. &
+	com 0. 0. 0. ctrlPV force axis 1. 0. 0.  target_val $(v_Fx*0.01) vel_max ${CsV} kp ${KP} kd ${KD}
+fix			sPx2 all mesh/surface/stress/servo file ${msh}/PistonX2.stl type 2 scale 1. move ${dw2} 0. 0. & 
+	com 0. 0. 0. ctrlPV force axis -1. 0. 0. target_val $(v_Fx*0.01) vel_max ${CsV} kp ${KP} kd ${KD} 
+
+#block the movement of all pistons but the pistonZ, since it is the only one that does not touch the grains
+fix_modify	sPy1 servo/integrate stop 
+fix_modify	sPy2 servo/integrate stop 
+fix_modify	sPx1 servo/integrate stop 
+fix_modify	sPx2 servo/integrate stop
+
+#calculate some variables
+variable	w	equal (v_Width-f_sPx1[7]+f_sPx2[7])
+variable	l	equal (v_Length-f_sPy1[8]+f_sPy2[8])
+variable	h	equal (v_Height+f_sPz[9]+v_dh0)
+variable	ssZ	equal (f_sPz[3]/(v_w*v_l))
+variable	ssY	equal ((f_sPy2[2]-f_sPy1[2])/(2*v_w*v_h))
+variable	ssX	equal ((f_sPx2[1]-f_sPx1[1])/(2*v_l*v_h))
+
+#Change thermo so we can see what is happening in the terminal
+thermo_style	custom step f_sPz[3] v_ssZ v_ssY v_ssX
+
+#Remaking the walls
+fix		wlls all wall/gran model hertz tangential history rolling_friction epsd2 &
+	mesh n_meshes 6 meshes mBse sPy1 sPy2 sPx1 sPx2 sPz 
+	
+#Initialize VTK files. Jump if not needed
+if   '$(v_vtkPlot!=1)' then 'jump src/2_Consolidation_Loose.liggghts noVTK'
+	#adding new dump files for drawing data -- paraview (.vtk)
+dump		dmpSph2 all custom/vtk ${Intv} ${part2}/partcles_*.vtk x y z radius #c_ken
+dump		dmpSph3 all custom/vtk ${Intv} ${part2}/displacement_*.vtk c_dpl[1] &
+	c_dpl[2] c_dpl[3] c_dpl[4]
+dump		frchain all local/gran/vtk ${Intv} ${part2}/forcechain*.vtk pgl
+	#adding new dump files for the meshes -- paraview (.vtk)
+dump		dmpBas all mesh/gran/VTK ${Intvmesh} ${part2}/mesh_base_*.vtk stress mBse
+dump		dmpsPz all mesh/gran/VTK ${Intv} ${part2}/mesh_sPz_*.vtk stress sPz
+dump		dmpPy1 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPy1_*.vtk stress sPy1
+dump		dmpPy2 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPy2_*.vtk stress sPy2
+dump		dmpPx1 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPx1_*.vtk stress sPx1
+dump		dmpPx2 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPx2_*.vtk stress sPx2
+label noVTK
+
+run ${runCal} post no
+#variable	consoStep	equal $(v_runCal)
+variable	consoStep	equal ${stpSv}
+#############################		Consolidation		#############################
+## In this part all the pistons will apply the same stress to the grains. The function 
+## 'servo' is actually controlled by a Force, this value is calculated at the start of
+## the file.
+#restart pistons movement
+fix_modify	sPy1 servo/integrate start 
+fix_modify	sPy2 servo/integrate start 
+fix_modify	sPx1 servo/integrate start 
+fix_modify	sPx2 servo/integrate start
+
+#create the force formula
+variable 	Fz	equal (v_CsS*v_w*v_l)
+variable 	Fy	equal (v_CsS*v_w*v_h)
+variable 	Fx	equal (v_CsS*v_l*v_h)
+
+#modify the target force of the all pistons
+fix_modify	sPz  servo/target_val v_Fz 
+fix_modify	sPy1 servo/target_val v_Fy  
+fix_modify	sPy2 servo/target_val v_Fy 
+fix_modify	sPx1 servo/target_val v_Fx 
+fix_modify	sPx2 servo/target_val v_Fx 
+
+#adding new dump files for general data -- matlab (.txt)
+if   '$(v_simType==4)' then 'variable Intvss equal $(v_Intv/5)' &
+else " variable Intvss equal $(v_Intv) "
+	#Piston Stress - Fz uz Fy1 uy1 Fy2 uy2 Fx1 ux1 Fx2 ux2
+fix			servostress all ave/time 1 1 ${Intvss} f_sPz[3] f_sPz[9] f_sPy1[2] & 
+	f_sPy1[8] f_sPy2[2] f_sPy2[8] f_sPx1[1] f_sPx1[7] f_sPx2[1] f_sPx2[7] &
+	file ${partg}/servoForce.txt
+	#Grain Grain ctct - ID1 ID2 Fx Fy Fz Cpx Cpy Cpz Delta
+dump		grains all custom ${Intv} ${partg}/grains*.txt id x y z radius c_ctc &
+	c_dpl[1] c_dpl[2] c_dpl[3] c_sts[1] c_sts[2] c_sts[3] c_sts[4] c_sts[5] c_sts[6] &
+	c_ken #omegax omegay omegaz c_pen
+	#Grain Grain ctct - ID1 ID2 Fx Fy Fz Cpx Cpy Cpz Delta
+dump		contactForces all local ${Intv} ${partg}/contForce*.txt c_pgl[7] &
+	c_pgl[8] c_pgl[10] c_pgl[11] c_pgl[12] c_pgl[13] c_pgl[14] c_pgl[15] c_pgl[16]
+	#cont forces ID1 ID2 Fx Fy Fz Cpx Cpy Cpz Delta
+
+run ${runCons} post no
+
+#Remove cohesion and run for a little longer
+fix m6 all property/global cohesionEnergyDensity peratomtypepair 2 0. 0. 0. 0.
+
+fix_modify	sPz servo/integrate stop
+fix_modify	sPy1 servo/integrate stop 
+fix_modify	sPy2 servo/integrate stop 
+fix_modify	sPx1 servo/integrate stop 
+fix_modify	sPx2 servo/integrate stop
+
+run ${runCal} post no
+variable	compStep	equal ${stpSv}
+
+#Save data and finish
+write_restart ${svState}/ConsoLoose.rest
+variable fnm string ${svState}/ConsoLoose.rest
+clear
+jump src/2_LoadConso.liggghts start

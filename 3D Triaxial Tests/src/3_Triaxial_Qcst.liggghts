@@ -1,0 +1,159 @@
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+#############################		Drained Triaxial Qcst Force		##############################
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+#Made by GONCALVES DE OLIVEIRA CHUEIRE Joao Augusto as part of PhD at INSA de Lyon
+
+label start
+
+######### Zero part : create needed variables #########
+#create variables
+variable	p		equal (v_ssZ+v_ssY+v_ssX)/3 				#mean stress
+variable	q		equal (sqrt(((v_ssZ-v_ssY)^2+(v_ssY-v_ssX)^2+(v_ssX-v_ssZ)^2)/2)) #actual dev stress
+variable	tarq	equal $(v_CpS-v_CsS) #target deviatoric stress
+	#yes/no change recalculation of values on first step of run
+
+#remake thermo
+thermo_style custom step v_ssZ v_ssY v_ssX v_q v_p
+
+######### First part : apply target deviatoric stress #########
+#Recalculate vertical stress - target q = CpS - CsS
+variable 	Fz		equal (v_CpS*v_w*v_l)
+fix_modify	sPz  	servo/target_val v_Fz 
+fix_modify	sPz  	servo/vel_max $(2*v_CpVv)
+fix_modify	sPy1 	servo/vel_max $(2*v_CpVv)
+fix_modify	sPy2 	servo/vel_max $(2*v_CpVv)
+fix_modify	sPx1 	servo/vel_max $(2*v_CpVv)
+fix_modify	sPx2 	servo/vel_max $(2*v_CpVv)
+
+#Reach deviatoric value
+run ${IQcst} pre yes post no
+	#check if q was reached, if not, rerun
+label reachQ
+if	'$(v_q<0.9995*v_tarq) || $(v_ssX<0.9995*v_CsS) || $(v_ssY<0.9995*v_CsS) ' then &
+	'run ${IQcst} post no pre no' 'jump src/3_Triaxial_Qcst.liggghts reachQ'
+
+######### Second part : change p without changing q #########
+variable	stpQst	equal ${stpSv} #initial step for Qcst
+variable	CpSv 	equal (v_CpS-(v_stpSv-v_stpQst)*v_strK) #reducing piston target stress (z)
+variable	CsSv	equal (v_CsS-(v_stpSv-v_stpQst)*v_strK) #reducing piston target stress (x,y)
+variable	Fz		equal (v_CpSv*v_w*v_l)
+variable	Fy		equal (v_CsSv*v_w*v_h)
+variable	Fx		equal (v_CsSv*v_l*v_h)
+variable	pT		equal (v_CpSv+2*v_CsSv)/3
+variable	Z		equal $(f_sPz[9]) #store the old position of Pz for analysis
+variable	Ez		equal (abs(f_sPz[9]/v_Height))
+
+#change thermo
+thermo_style custom step v_Ez v_pT v_p v_q v_CpSv v_CsSv v_ssZ v_ssY v_ssX 
+
+#modify piston force values and Pz speed so it matches the others (high value)
+fix_modify	sPz  	servo/target_val v_Fz
+fix_modify	sPy1 	servo/target_val v_Fy
+fix_modify	sPy2 	servo/target_val v_Fy
+fix_modify	sPx1 	servo/target_val v_Fx
+fix_modify	sPx2 	servo/target_val v_Fx
+
+#Change the piston speeds to the right value - need to be fixed 
+fix_modify	sPz  	servo/vel_max $(100*v_CpVv)
+fix_modify	sPy1 	servo/vel_max $(100*v_CpVv)
+fix_modify	sPy2 	servo/vel_max $(100*v_CpVv)
+fix_modify	sPx1 	servo/vel_max $(100*v_CpVv)
+fix_modify	sPx2 	servo/vel_max $(100*v_CpVv)
+
+#modify grain and contact force to use Intvss (reduced interval)
+undump grains
+	#Grain Grain ctct - ID1 ID2 Fx Fy Fz Cpx Cpy Cpz Delta
+dump		grains all custom ${Intvss} ${partg}/grains*.txt id x y z radius c_ctc &
+	c_dpl[1] c_dpl[2] c_dpl[3] c_sts[1] c_sts[2] c_sts[3] c_sts[4] c_sts[5] c_sts[6] &
+	c_ken #omegax omegay omegaz c_pen
+	#Grain Grain ctct - ID1 ID2 Fx Fy Fz Cpx Cpy Cpz Delta
+undump contactForces
+dump		contactForces all local ${Intvss} ${partg}/contForce*.txt c_pgl[7] &
+	c_pgl[8] c_pgl[10] c_pgl[11] c_pgl[12] c_pgl[13] c_pgl[14] c_pgl[15] c_pgl[16]
+	#cont forces ID1 ID2 Fx Fy Fz Cpx Cpy Cpz Delta
+
+###Prepare to run :
+	##Run divided in two parts, the first one changes stress faster than the second. The first one can be fast because there is no much change, while the second need to be very detailed
+	#When the direction of Pz movement change, the value v_strK will be reduced to allow Pz enough time to reach its target stress. Check : When the new position of Pz is smaller then the position of the old step (compression) it's changed.
+	#variable runTyp will control the need to recalculate the stress forces upon each run call (needed on the first run and just after the force v_strK ajustment)
+	#Loop will
+
+### Before Rupture
+variable 	Z equal $(f_sPz[9])
+run ${IQcst} pre yes post no
+
+	#start loop
+label loopQcst
+if	' ( $(v_CsSv<0.99*v_CsS) && $(f_sPz[9]<v_Z) && $(v_q<0.992*v_tarq) )' then &
+	'jump src/3_Triaxial_Qcst.liggghts chQcst'
+variable 	Z equal $(f_sPz[9])
+	#run, change
+run ${IQcst} pre no post no
+	#Stop loop if Targeted E is reached
+if '$(v_Ez<=v_MaxE) && $(v_CsSv>v_strK)' then 'jump src/3_Triaxial_Qcst.liggghts loopQcst' &
+else 'jump src/3_Triaxial_Qcst.liggghts endQcst'
+
+###After Rupture
+label chQcst
+write_restart ${svState}/QcstRupt.rest
+	#change force calculation
+variable 	rptStep	equal ${stpSv}
+variable	IQcst	equal $(v_IQcst/2)
+variable 	CpSvE 	equal ${CpSv}
+variable 	CsSvE 	equal ${CsSv}
+variable	pP  	equal $(4*v_termInt) #pause piston
+variable	CpSv 	equal (v_CpSvE-(v_stpSv-v_pP-v_rptStep)*v_strK2) #reducing piston target stress (z)
+variable	CsSv	equal (v_CsSvE-(v_stpSv-v_pP-v_rptStep)*v_strK2) #reducing piston target stress (x,y)
+variable	Fz		equal (v_CpSv*v_w*v_l)
+variable	Fy		equal (v_CsSv*v_w*v_h)
+variable	Fx		equal (v_CsSv*v_l*v_h)
+
+	#update piston values - FORCE
+fix_modify	sPz  	servo/target_val v_Fz
+fix_modify	sPy1 	servo/target_val v_Fy
+fix_modify	sPy2 	servo/target_val v_Fy
+fix_modify	sPx1 	servo/target_val v_Fx
+fix_modify	sPx2 	servo/target_val v_Fx
+	#update piston values - SPEED
+fix_modify	sPz  servo/vel_max $(3*v_CpVv)
+fix_modify	sPy1 servo/vel_max $(v_CpVv)
+fix_modify	sPy2 servo/vel_max $(v_CpVv)
+fix_modify	sPx1 servo/vel_max $(v_CpVv) 
+fix_modify	sPx2 servo/vel_max $(v_CpVv)
+
+#stop the pistons and run some steps so they can get adapted to the new Force and Speed values
+fix_modify	sPz  servo/integrate stop 
+fix_modify	sPy1 servo/integrate stop 
+fix_modify	sPy2 servo/integrate stop 
+fix_modify	sPx1 servo/integrate stop 
+fix_modify	sPx2 servo/integrate stop
+run ${pP} pre yes post no
+
+#Start the piston and keep the test going
+fix_modify	sPz  servo/integrate start 
+fix_modify	sPy1 servo/integrate start 
+fix_modify	sPy2 servo/integrate start 
+fix_modify	sPx1 servo/integrate start 
+fix_modify	sPx2 servo/integrate start
+
+#modify grain and contact force to use Intv (normal interval)
+undump grains
+	#Grain Grain ctct - ID1 ID2 Fx Fy Fz Cpx Cpy Cpz Delta
+dump		grains all custom ${Intv} ${partg}/grains*.txt id x y z radius c_ctc &
+	c_dpl[1] c_dpl[2] c_dpl[3] c_sts[1] c_sts[2] c_sts[3] c_sts[4] c_sts[5] c_sts[6] &
+	c_ken #omegax omegay omegaz c_pen
+	#Grain Grain ctct - ID1 ID2 Fx Fy Fz Cpx Cpy Cpz Delta
+undump contactForces
+dump		contactForces all local ${Intv} ${partg}/contForce*.txt c_pgl[7] &
+	c_pgl[8] c_pgl[10] c_pgl[11] c_pgl[12] c_pgl[13] c_pgl[14] c_pgl[15] c_pgl[16]
+	#cont forces ID1 ID2 Fx Fy Fz Cpx Cpy Cpz Delta
+
+#Stop loop if Targeted E is reached
+label loopQcst2
+run ${IQcst} pre no post no
+if '$(v_Ez<=v_MaxE) && $(v_CsSv>v_strK)'  then 'jump src/3_Triaxial_Qcst.liggghts loopQcst2' 
+
+#Back to the main file
+label endQcst
+write_restart ${svState}/QcstEnd.rest
+jump 0_Execution.liggghts endCompression

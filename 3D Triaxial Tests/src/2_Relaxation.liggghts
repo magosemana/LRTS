@@ -1,0 +1,87 @@
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+#############################	 Consolidation Execution		##############################
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+#Made by GONCALVES DE OLIVEIRA CHUEIRE Joao Augusto as part of PhD at INSA de Lyon
+
+#############################		Calibration		#############################
+## Grains file will be Loaded. As the simulation was cleared, all the initialization parameters must be remade.
+## Then the pisntonZ will be slowly advanced to touch the grains. The max stress it can apply is really small
+## so it should not impact the simulation.
+
+##############Prepare simulation
+#### Initialization ####
+label start
+
+variable ReVy 		equal ${MaxRadius} #relax speed
+if '$(v_ReVy>v_CsV)' then 'variable ReVy equal ${CsV}'
+variable ReVx 		equal $(v_ReVy*v_Width/v_Height) #relax speed
+variable runRelax 	equal $(ceil(v_MaxRadius/(v_ReVy)/v_dt))
+
+fix			sPz  all mesh/surface/stress file ${msh}/PistonZ.stl  type 2 scale 1. 
+fix			sPy1 all mesh/surface/stress file ${msh}/PistonY1.stl type 2 scale 1. 
+fix			sPy2 all mesh/surface/stress file ${msh}/PistonY2.stl type 2 scale 1. 
+fix			sPx1 all mesh/surface/stress file ${msh}/PistonX1.stl type 2 scale 1. 
+fix			sPx2 all mesh/surface/stress file ${msh}/PistonX2.stl type 2 scale 1.
+
+	#add movement
+fix 		mvPy1 all move/mesh mesh sPy1 linear 0.0 $(-v_ReVy) 0.0 
+fix 		mvPy2 all move/mesh mesh sPy2 linear 0.0 $(v_ReVy) 0.0 
+fix 		mvPx1 all move/mesh mesh sPx1 linear $(-v_ReVx) 0.0 0.0 
+fix 		mvPx2 all move/mesh mesh sPx2 linear $(v_ReVx) 0.0 0.0 
+	#wall def
+fix			wlls all wall/gran model hertz tangential history  rolling_friction epsd2 &
+	mesh n_meshes 6 meshes mBse sPy1 sPy2 sPx1 sPx2 sPz
+
+#Initialize VTK files. Jump if not needed
+if   '$(v_vtkPlot!=1)' then 'jump src/2_Relaxation.liggghts noVTK'
+	#vtk grains
+dump		dmpSph2 all custom/vtk ${Intv} ${part2}/partcles_*.vtk x y z radius #c_ken
+dump		dmpSph3 all custom/vtk ${Intv} ${part2}/displacement_*.vtk c_dpl[1] &
+	c_dpl[2] c_dpl[3] c_dpl[4]
+dump		frchain all local/gran/vtk ${Intv} ${part2}/forcechain*.vtk pgl
+	#vtk pistons
+dump		dmpBas all mesh/gran/VTK ${Intvmesh} ${part2}/mesh_base_*.vtk stress mBse
+dump		dmpsPz all mesh/gran/VTK ${Intv} ${part2}/mesh_sPz_*.vtk stress sPz
+dump		dmpPy1 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPy1_*.vtk stress sPy1
+dump		dmpPy2 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPy2_*.vtk stress sPy2
+dump		dmpPx1 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPx1_*.vtk stress sPx1
+dump		dmpPx2 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPx2_*.vtk stress sPx2
+label noVTK
+
+thermo_style	custom step atoms f_sPy1[8] f_sPy2[8] f_sPx1[7] f_sPx2[7] 
+
+run ${runRelax} post no
+
+#save distance moved
+variable	dl1	equal $(f_sPy1[8])
+variable	dl2	equal $(f_sPy2[8])
+variable	dw1	equal $(f_sPx1[7])
+variable	dw2	equal $(f_sPx2[7])
+
+#return to state necessary to continue consolidation
+if   '$(v_vtkPlot!=1)' then 'jump src/2_Relaxation.liggghts noVTK2'
+undump dmpPx2
+undump dmpPx1
+undump dmpPy2
+undump dmpPy1
+undump dmpsPz
+undump dmpBas
+undump dmpSph2
+undump dmpSph3
+undump frchain
+label noVTK2
+
+unfix wlls
+unfix mvPy1
+unfix mvPy2
+unfix mvPx1
+unfix mvPx2
+unfix sPx2
+unfix sPx1
+unfix sPy2
+unfix sPy1
+unfix sPz
+
+#Save data and finish
+#write_restart ResetConsolidation.resData
+jump src/2_Consolidation.liggghts endRelax

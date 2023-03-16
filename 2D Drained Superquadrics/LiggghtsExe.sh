@@ -7,6 +7,7 @@
 
 #Make and clean directories
 mkdir post1  post2 generalvariables reFolder
+nbCpu=4 #nb of cpu cores fore execution
 
 count=`ls -1 *.resData 2>/dev/null | wc -l`
 if [ $count != 0 ]; then
@@ -25,4 +26,4 @@ fi
 
 
 #Execute LIGGGHTS
-mpirun -np 12 lmp_auto -v tfI ${JI} $Jump -e screen < Box.liggghts
+mpirun -np $nbCpu lmp_auto -v tfI ${JI} $Jump -e screen < Box.liggghts

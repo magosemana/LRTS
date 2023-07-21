@@ -6,7 +6,6 @@
 label start
 #All pistons will be removed and turned into movement control
 	#save positions
-variable	dh	equal 0
 variable	dh0	equal $(v_dh0+f_sPz[9])
 variable	dl1	equal $(v_dl1+f_sPy1[8])
 variable	dl2	equal $(v_dl2+f_sPy2[8])
@@ -33,13 +32,12 @@ fix			sPy2 all mesh/surface/stress file ${msh}/PistonY2.stl type 2 scale 1. move
 fix			sPx1 all mesh/surface/stress file ${msh}/PistonX1.stl type 2 scale 1. move $(v_dw1) 0.0 0.0 
 fix			sPx2 all mesh/surface/stress file ${msh}/PistonX2.stl type 2 scale 1. move $(v_dw2) 0.0 0.0 
 	#add movement
-fix			mvPz  all move/mesh mesh sPz linear  0.0 0.0 $(-v_CpVv)
 	#wall def
 fix			wlls all wall/gran model hertz tangential history  rolling_friction epsd2 &
 	mesh n_meshes 6 meshes mBse sPy1 sPy2 sPx1 sPx2 sPz 
 	#dump
 if   '$(v_vtkPlot!=1)' then 'jump src/3_Triaxial_Undrained.liggghts noVTK2'
-dump		dmpsPz all mesh/gran/VTK ${Intv} ${part2}/mesh_sPy1_*.vtk stress sPy1
+dump		dmpsPz all mesh/gran/VTK ${Intv} ${part2}/mesh_sPy1_*.vtk stress sPz
 dump		dmpPy1 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPy1_*.vtk stress sPy1
 dump		dmpPy2 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPy2_*.vtk stress sPy2
 dump		dmpPx1 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPx1_*.vtk stress sPx1
@@ -53,18 +51,18 @@ variable	w	equal (v_Width-f_sPx1[7]-v_dw1+f_sPx2[7]+v_dw2)
 variable 	l	equal (v_Length-f_sPy1[8]-v_dl1+f_sPy2[8]+v_dl2)
 variable	h	equal (v_Height+f_sPz[9]+v_dh0-v_dpz)
 
-#recalculate piston speeds
-variable	vNul equal 0.0
+#recalculate piston velocities
 variable	nVx2 equal (v_w*(sqrt((v_h)/(v_h-v_dpz))-1)/(2*v_dt))
 variable	nVx1 equal (-v_nVx2)
 variable	nVy2 equal (v_nVx2*v_l/v_w)
 variable	nVy1 equal (-v_nVy2)
 
 #Remake the movement
-fix 		mvPy1 all move/mesh mesh sPy1 linear/variable v_vNul v_nVy1 v_vNul
-fix 		mvPy2 all move/mesh mesh sPy2 linear/variable v_vNul v_nVy2 v_vNul
-fix 		mvPx1 all move/mesh mesh sPx1 linear/variable v_nVx1 v_vNul v_vNul 
-fix 		mvPx2 all move/mesh mesh sPx2 linear/variable v_nVx2 v_vNul v_vNul
+fix			mvPz  all move/mesh mesh sPz linear  0.0 0.0 $(-v_CpVv)
+fix 		mvPy1 all move/mesh mesh sPy1 linear/variable 0.0 v_nVy1 0.0
+fix 		mvPy2 all move/mesh mesh sPy2 linear/variable 0.0 v_nVy2 0.0
+fix 		mvPx1 all move/mesh mesh sPx1 linear/variable v_nVx1 0.0 0.0 
+fix 		mvPx2 all move/mesh mesh sPx2 linear/variable v_nVx2 0.0 0.0
 
 thermo_style	custom step atoms f_sPz[9] f_sPy1[8] f_sPy2[8] f_sPx1[7] f_sPx2[7] &
 	v_nVx2 v_nVy2 

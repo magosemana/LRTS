@@ -23,11 +23,14 @@ if   '$(v_vtkPlot==1)' then 'dump dmpsPz all mesh/gran/VTK ${Intv} ${part2}/mesh
 variable	ssZ	equal (f_sPz[3]/(v_w*v_l))
 variable	q	equal (sqrt(((v_ssZ-v_ssY)^2+(v_ssY-v_ssX)^2+(v_ssX-v_ssZ)^2)/2))
 
-#Change the piston speeds to the right value
+#CpvH  will be considered as the velocity of Y piston. X will be calculated in relation to it
+variable 	CpVhx		equal (v_CpVh*v_w/v_l)
+
+#Change the piston velocities to the right value
 fix_modify	sPy1	servo/vel_max ${CpVh}
 fix_modify	sPy2	servo/vel_max ${CpVh}
-fix_modify	sPx1	servo/vel_max ${CpVh}
-fix_modify	sPx2	servo/vel_max ${CpVh}
+fix_modify	sPx1	servo/vel_max ${CpVhx}
+fix_modify	sPx2	servo/vel_max ${CpVhx}
 
 #Change thermo style
 thermo_style custom step f_sPz[3] v_ssZ v_ssY v_ssX v_q 
@@ -40,19 +43,3 @@ run ${rT} post no
 #Save and go back to main file
 write_restart ${svState}/Drained.rest
 jump 0_Execution.liggghts endCompression
-
-
-########## Compression Loop
-# Loop variables - no longer needed since force function was added to the servo
-#variable	ct		equal 0 #How many times run3b was executed
-# Start loop
-#label doComp 
-#the target value of the Piston Z will be increased gradually in the start so it does not pack a punch right into the beggining
-#Check the deformation
-#if "$(v_ez) >= $(v_MaxE)" then "jump  3_Triaxial_Drained.liggghts goEnd"
-#variable 	ct equal $(v_ct+1) #count another run3b
-#run ${runCh} 
-#if " $(v_ct) == 4" then " "
-#if we run enough runCh to equal or surpass runComp then we can end the simulation, else go back to newPiston
-#if " $(v_runCh * v_ct) <= ${runComp}" then "jump 3_Triaxial_Drained.liggghts doComp"
-#label goEnd

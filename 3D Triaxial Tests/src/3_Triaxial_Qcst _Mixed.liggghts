@@ -1,0 +1,109 @@
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+#############################		Drained Triaxial Qcst Force		##############################
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+#Made by GONCALVES DE OLIVEIRA CHUEIRE Joao Augusto as part of PhD at INSA de Lyon
+
+label start
+
+######### Zero part : create needed variables #########
+#create variables
+variable	p		equal (v_ssZ+v_ssY+v_ssX)/3 				#mean stress
+variable	q		equal (sqrt(((v_ssZ-v_ssY)^2+(v_ssY-v_ssX)^2+(v_ssX-v_ssZ)^2)/2)) #actual dev stress
+variable	tarq	equal $(v_CpS-v_CsS) #target deviatoric stress
+	#yes/no change recalculation of values on first step of run
+
+#CpvH will be considered as the velocity of Y pistons. Vx will be calculated in relation to it, considering
+#that the strain rate of both pistons should be equal.
+variable 	CpVhx		equal (v_CpVh*v_w/v_l)
+
+#remake thermo
+thermo_style custom step v_ssZ v_ssY v_ssX v_q v_p
+
+######### First part : apply target deviatoric stress #########
+#Recalculate vertical stress - target q = CpS - CsS
+variable 	Fz		equal (v_CpS*v_w*v_l)
+fix_modify	sPz  	servo/target_val v_Fz 
+fix_modify	sPz  	servo/vel_max $(2*v_CpVv)
+fix_modify	sPy1 	servo/vel_max $(2*v_CpVh)
+fix_modify	sPy2 	servo/vel_max $(2*v_CpVh)
+fix_modify	sPx1 	servo/vel_max $(2*v_CpVhx)
+fix_modify	sPx2 	servo/vel_max $(2*v_CpVhx)
+
+#Reach deviatoric value
+run ${IQcst} pre yes post no
+	#check if q was reached, if not, rerun
+label reachQ
+if	'$(v_q<0.9995*v_tarq) || $(v_ssX<0.9995*v_CsS) || $(v_ssY<0.9995*v_CsS) ' then &
+	'run ${IQcst} post no pre no' 'jump src/3_Triaxial_Qcst.liggghts reachQ'
+
+######### Second part : unload horizontally while maintaining q  constant #########
+#Working on mixed controls, horizontal servos will be changed into displacement controlled meshes
+	#save horizontal piston positions
+variable	dl1	equal $(v_dl1+f_sPy1[8])
+variable	dl2	equal $(v_dl2+f_sPy2[8])
+variable	dw1	equal $(v_dw1+f_sPx1[7])
+variable	dw2	equal $(v_dw2+f_sPx2[7])
+	#delete stress controlled walls to create strain ones
+if   '$(v_vtkPlot!=1)' then 'jump src/3_Triaxial_Undrained.liggghts noVTK'
+undump		dmpPy1
+undump		dmpPy2
+undump		dmpPx1
+undump		dmpPx2
+label noVTK
+unfix		wlls
+unfix		sPy1
+unfix		sPy2
+unfix		sPx1
+unfix		sPx2
+	#recreate structures in the correct position
+fix			sPy1 all mesh/surface/stress file ${msh}/PistonY1.stl type 2 scale 1. move 0.0 $(v_dl1) 0.0  
+fix			sPy2 all mesh/surface/stress file ${msh}/PistonY2.stl type 2 scale 1. move 0.0 $(v_dl2) 0.0 
+fix			sPx1 all mesh/surface/stress file ${msh}/PistonX1.stl type 2 scale 1. move $(v_dw1) 0.0 0.0 
+fix			sPx2 all mesh/surface/stress file ${msh}/PistonX2.stl type 2 scale 1. move $(v_dw2) 0.0 0.0 
+	#wall definition
+fix			wlls all wall/gran model hertz tangential history  rolling_friction epsd2 &
+	mesh n_meshes 6 meshes mBse sPy1 sPy2 sPx1 sPx2 sPz 
+	#dump piston files again
+if   '$(v_vtkPlot!=1)' then 'jump src/3_Triaxial_Undrained.liggghts noVTK2'
+dump		dmpPy1 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPy1_*.vtk stress sPy1
+dump		dmpPy2 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPy2_*.vtk stress sPy2
+dump		dmpPx1 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPx1_*.vtk stress sPx1
+dump		dmpPx2 all mesh/gran/VTK ${Intv} ${part2}/mesh_sPx2_*.vtk stress sPx2
+label noVTK2
+
+#update variables
+variable	w		equal (v_Width-f_sPx1[7]-v_dw1+f_sPx2[7]+v_dw2)
+variable 	l		equal (v_Length-f_sPy1[8]-v_dl1+f_sPy2[8]+v_dl2)
+variable	h		equal (v_Height+f_sPz[9]+v_dh0)
+
+#update velocity
+variable 	CpVhx	equal (v_CpVh*v_w/v_l)
+
+#calculte vertical force necessary to keep Q fix
+variable	ssY		equal ((f_sPy2[2]-f_sPy1[2])/(2*v_w*v_h)
+variable	ssX		equal ((f_sPx2[1]-f_sPx1[1])/(2*v_l*v_h)
+variable	ssZ		equal ((v_ssX+v_ssY+sqrt(4*v_tarq^2-3*(v_ssX-v_ssY)^2))/2)
+
+#variables for observing
+variable	q		equal (sqrt(((v_ssZ-v_ssY)^2+(v_ssY-v_ssX)^2+(v_ssX-v_ssZ)^2)/2))
+variable	Ez		equal (abs(f_sPz[9]+v_dh0)/v_Height)
+
+#let the vertical piston adapt to the new horizontal conditions
+run $(2*v_IQcst) pre yes post no
+
+#add horizontal piston movement
+fix 		mvPy1 all move/mesh mesh sPy1 linear 0.0 (-v_CpVh) 0.0 
+fix 		mvPy2 all move/mesh mesh sPy2 linear 0.0 (v_CpVh) 0.0 
+fix 		mvPx1 all move/mesh mesh sPx1 linear/variable (-v_CpVhx) 0.0 0.0 
+fix 		mvPx2 all move/mesh mesh sPx2 linear/variable (v_CpVhx) 0.0 0.0 
+
+#change thermo
+thermo_style custom step v_Ez v_p v_q v_ssZ v_ssY v_ssX 
+
+run ${IQcst} pre yes post no
+label loopQcst
+	#Stop loop if Targeted E is reached
+if '$(v_Ez<=v_MaxE)' then 'run ${IQcst} pre no post no' 'jump src/3_Triaxial_Qcst_Mixed.liggghts loopQcst'
+
+write_restart ${svState}/QcstEnd.rest
+jump 0_Execution.liggghts endCompression

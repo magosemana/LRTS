@@ -7,21 +7,21 @@ label start
 shell [ ! -d ".${svState}" ] && mkdir ${svState}
 
 #create constants for thermo analysis
-variable	w			equal (v_Width-f_sPx1[7]+f_sPx2[7])
-variable	l			equal (v_Length-f_sPy1[8]+f_sPy2[8])
-variable	h			equal (v_Height+f_sPz[9])
+variable	w		equal (v_Width-f_sPx1[7]+f_sPx2[7])
+variable	l		equal (v_Length-f_sPy1[8]+f_sPy2[8])
+variable	h		equal (v_Height+f_sPz[9])
 variable	ssZ		equal (f_sPz[3]/(v_w*v_l))
 variable	ssY		equal ((f_sPy2[2]-f_sPy1[2])/(2*v_w*v_h))
 variable	ssX		equal ((f_sPx2[1]-f_sPx1[1])/(2*v_l*v_h))
-variable	p			equal (v_ssZ+v_ssY+v_ssX)/3
-variable	q			equal (sqrt(((v_ssZ-v_ssY)^2+(v_ssY-v_ssX)^2+(v_ssX-v_ssZ)^2)/2))
+variable	p		equal (v_ssZ+v_ssY+v_ssX)/3
+variable	q		equal (sqrt(((v_ssZ-v_ssY)^2+(v_ssY-v_ssX)^2+(v_ssX-v_ssZ)^2)/2))
 	#q value (to check if cst)
 
 #remake thermo
 thermo_style custom step f_sPz[9] f_sPz[3] f_sPy1[2] f_sPx1[1] v_ssZ v_ssY v_ssX v_q v_p
 
 ######### First part : apply maximal vertical stress
-#Change the piston speeds to the right value
+#Change the piston velocities to the right value
 fix_modify	sPz  	servo/vel_max $(2*v_CpVv)
 fix_modify	sPy1 	servo/vel_max ${CpVh}
 fix_modify	sPy2 	servo/vel_max ${CpVh}
@@ -44,7 +44,7 @@ variable	chk		equal 1
 #change thermo
 thermo_style	custom step f_sPz[9] v_CpSv v_CsSv v_ssZ v_ssY v_ssX v_q v_p
 
-#modify piston force values and Pz speed so it matches the others (high value)
+#modify piston force values and Pz velocity so it matches the others (high value)
 fix_modify	sPz  	servo/target_val v_Fz
 fix_modify	sPy1 	servo/target_val v_Fy
 fix_modify	sPy2 	servo/target_val v_Fy

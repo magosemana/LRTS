@@ -46,32 +46,34 @@ variable	c			equal 5e6		#Cohesion energy density in J/m3 (Pa?)
 	#Options : 1 Drained, 2 Undrained Prop Strain, 3 Undrained Isoch, 4 Qcst, 5 Qcst_Mixte, 0 insertion only
 variable 	simType		equal 4
 	#strain target to stop simulation 0.2=20%
-variable	MaxE		equal 0.2
+variable	MaxE		equal 0.35
 	#create grain and piston vtk file : 1 yes, 0 no
 variable	vtkPlot		equal 0
 	#Add dif insertion values : 1 for yes, 0 for no
 variable	difIns		equal 0
 	#Add cohesion into insertion and consolidation : 1 for yes, 0 for no
 variable	insCoeh		equal 0
+	#Relaxation of walls before compression for grain reorganization : 1 yes 0 no -- not workin properly
+variable	relaxBol	equal 0
 
 ########## Simulation parameters
 # - Drained : choose CpVh at least 20x higher then CpVv to ensure the horizontal pistons
 # have enough velocity to mantain the confining stress constant. Recommended CpVv=0.002 and CpVh=0.05, 
 # with Intv=12500. 
 # - Qcst : An equivalence of (CpVh=CpVv)=0.002 for strK=5e3, is needed for the pistons to have enough 
-#time to adapt to the targeted pressure. velocity of the pistons should be increased if increasing strK.
+#time to adapt to the targeted pressure.Velocity of the pistons should be increased if increasing strK.
 #Furthermore q target is given by the difference (CpS-CsS). These values must be well defined.
 # - Undrained : the code will adapt the consolidation horizontal velocity (CpVh) to make sure 
 #the volume of the specimen stay constant for any value of vertical velocity (CpVv).
 	#piston parameters
-variable	CsS			equal 50e3		#Pistons stress - Consolidation [Pa] 			- all sim types
+variable	CsS			equal 100e3		#Pistons stress - Consolidation [Pa] 			- all sim types
 variable	CsV			equal 0.02		#Pistons max velocity - Consolidation [m/s]		- all sim types
-variable	CpVv		equal 0.002		#Vertical piston velocity - Compression [m/s]	- all sim types
+variable	CpVv		equal 0.008		#Vertical piston velocity - Compression [m/s]	- all sim types
 variable	CpVh		equal 0.002		#Horizontal piston velocity - compression [m/s]	- sim type 1,5
 variable	KP			equal 1.5		#PID piston control (indicated 1.5)				- all sim types
 variable	KD			equal 0			#PID piston control (indicated 0)				- all sim types
 	#Qcst values (targeted q = CpS - CsS)
-variable	CpS			equal 150e3		#Vertical piston targeted stress [Pa]			- sim type 4,5
+variable	CpS			equal 200e3		#Vertical piston targeted stress [Pa]			- sim type 4,5
 variable	strK		equal 2.5e3		#Pressure value reduced per second [Pa]	    	- sim type 4,5
 variable	IQcst		equal 100e3		#Interval between checks of Qcst calculations	- sim type 4,5
 	#Proportional strain
@@ -162,8 +164,8 @@ if '$(v_simType==0)' then 'quit' #if only insertion stop here
 #Calibration and Consolidation
 if '$(v_insCoeh==1)' then 'jump src/2_Consolidation_Loose.liggghts start' &
 elif '$(v_tfI<2)' 'jump src/2_Consolidation.liggghts start' &
-elif '$(v_tfI==3) && $(v_simType==4)' 'jump src/2_LoadConso.liggghts start' &
-else " print 'Wrong simulation type of simulation chosen.' " " quit "
+elif '$(v_tfI==3) && $(v_simType!=4)' " print 'Wrong simulation type chosen with Qcst load.' " " quit " &
+else 'jump src/2_LoadConso.liggghts start'
 label endConsolidation
 
 #Execute the correct type of simulation
@@ -172,7 +174,6 @@ elif '$(v_simType==2)' 'jump src/3_Triaxial_Proportional_Strain.liggghts start' 
 elif '$(v_simType==3)' 'jump src/3_Triaxial_Undrained.liggghts start' &
 elif '$(v_simType==4) && $(v_tfI==3) ' 'jump src/3_Triaxial_Qcst_Load.liggghts start' &
 elif '$(v_simType==4)' 'jump src/3_Triaxial_Qcst.liggghts start' &
-elif '$(v_simType==5)' 'jump src/3_Triaxial_Qcst _Mixed.liggghts start' &
 else " print 'No (or wrong) simulation type chosen' " " quit "
 label endCompression
 variable endStep equal ${stpSv}
@@ -190,7 +191,7 @@ print		"Length=${Length}"
 print		"Height=${Height}"
 	#Execution Type
 if '$(v_simType==1)' then " print 'SimType=Drained' " &
-elif '$(v_simType>3)' " print 'SimType=Qcst' " &
+elif '$(v_simType==4)' " print 'SimType=Qcst' " &
 else " print 'SimType=Undrained' " 
 print	'dl1=${dl1}'
 print	'dl2=${dl2}'
@@ -203,7 +204,7 @@ print		"StartCons=${consoStep}"
 print		"EndCons=${compStep}"
 print		"EndComp=${endStep}"
 print		"Intv=${Intv}"
-if '$(v_simType>3)' then " print 'QcstInit=${stpQst}' "  &
+if '$(v_simType==4)' then " print 'QcstInit=${stpQst}' "  &
 	" print 'QcstRupt=${rptStep}' "  
 	#folder
 print		"vtkFolder=${part2}"

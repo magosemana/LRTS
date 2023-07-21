@@ -5,12 +5,11 @@
 #exists the program will not do the insertion part
 clear
 #Make and clean directories
-dirBse=SimResults 				#main directory
-dirPs1=$dirBse/post1			#insertion vtk
-dirPs2=$dirBse/post2			#triaxial vtk
-dirGnV=$dirBse/generalvariables	#data directory
-dirRes=$dirBse/reFolder			#reset files directory
-nbCpu=4  #nb of cpu cores fore execution
+dirBse=SimResults
+dirPs1=$dirBse/post1
+dirPs2=$dirBse/post2
+dirGnV=$dirBse/generalvariables
+dirRes=$dirBse/reFolder
 
 [ ! -d "./$dirBse" ] && mkdir $dirBse
 [ ! -d "./$dirPs1" ] && mkdir $dirPs1 
@@ -43,7 +42,7 @@ SECONDS=0
 #Execute LIGGGHTS
 #mpirun -np 12 lmp_auto -v tfI $JI  < 0_Execution.liggghts
 ##Detailled execution
-mpirun -np $nbCpu lmp_auto -v tfI $dirBse $dirPs1 $dirPs2 $dirGnV $dirRes $JI -e screen < 0_Execution.liggghts
+mpirun -np 4 lmp_auto -v tfI $dirBse $dirPs1 $dirPs2 $dirGnV $dirRes $JI -e screen < 0_Execution.liggghts
 
 #Finish adding timer and execution type to Matlab file
 fnm='LiggghtstoMatlab.txt'

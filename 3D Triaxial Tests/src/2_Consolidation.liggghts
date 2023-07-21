@@ -66,9 +66,6 @@ compute		ken all ke/atom			#atom kinetic energy
 	#all cad files were drawn in cm, so they have to be scaled by a 0.01 factor
 fix			mBse all mesh/surface file ${msh}/Boxbase.stl type 2 scale 1. #box base
 
-if '$(v_relaxBol==1)' then 'jump src/2_Relaxation.liggghts start'
-label endRelax
-
 	#pistons as servo
 fix 		sPz  all mesh/surface/stress/servo file ${msh}/PistonZ.stl  type 2 scale 1. move 0. 0. ${dh0} & 
 	com 0. 0. 0. ctrlPV force axis 0. 0. -1. target_val $(v_Fz*0.01) vel_max ${CsV} kp ${KP} kd ${KD}	
@@ -161,6 +158,11 @@ dump		contactForces all local ${Intv} ${partg}/contForce*.txt c_pgl[7] &
 	#cont forces ID1 ID2 Fx Fy Fz Cpx Cpy Cpz Delta
 
 run ${runCons} post no
+
+label verifyStress
+if	'$((abs(v_ssZ-v_CsS)/v_CsS)>0.9995) || $((abs(v_ssY-v_CsS)/v_CsS)>0.9995) || $((abs(v_ssX-v_CsS)/v_CsS)>0.9995)' then &
+	'run ${runCal} post no pre no' 'jump src/2_Consolidation.liggghts verifyStress'
+
 variable	compStep	equal ${stpSv}
 
 #Save data and finish
